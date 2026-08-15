@@ -265,6 +265,24 @@ table tr.clickable:hover{background:var(--purple-bg)}
     </div>
 
     <div class="card">
+      <h2>クラウド同期（スマホ・PC間）</h2>
+      <p style="font-size:12px;color:var(--text-sub);margin-top:0">同期コードを生成し、同じコードをもう一方の端末にも入力すると、データが自動で共有されます。アカウント登録は不要ですが、<b>このコードを知っている人は誰でもデータを読み書きできます</b>。他人に教えないでください。</p>
+      <div class="fg">
+        <label>同期コード</label>
+        <div class="row">
+          <input type="text" id="syncCodeInput" placeholder="例: A7K2P-9QXRT" style="flex:1;min-width:160px">
+          <button class="btn sm" id="btnGenCode">コードを生成</button>
+        </div>
+      </div>
+      <label class="checkline"><input type="checkbox" id="syncEnabled"> このコードで同期を有効にする</label>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="btnSyncPush">今すぐアップロード</button>
+        <button class="btn" id="btnSyncPull">今すぐダウンロード</button>
+      </div>
+      <p style="font-size:11.5px;color:var(--text-sub);margin-top:8px" id="syncStatus"></p>
+    </div>
+
+    <div class="card">
       <h2>タグ管理</h2>
       <div class="row">
         <input type="text" id="newTagInput" placeholder="新しいタグ名" style="flex:1;min-width:120px;padding:7px 10px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-family:inherit;font-size:13px">
@@ -285,7 +303,7 @@ table tr.clickable:hover{background:var(--purple-bg)}
     </div>
   </section>
 
-  <div class="footer-note">全データはこの端末のブラウザにだけ保存されます（外部送信なし）</div>
+  <div class="footer-note" id="footerNote">全データはこの端末のブラウザにだけ保存されます（外部送信なし）</div>
 </div>
 
 <!-- Day detail modal -->
@@ -335,7 +353,7 @@ table tr.clickable:hover{background:var(--purple-bg)}
     <p style="font-size:13px"><b>XPとレベル</b><br>タスク完了で見積もりの精度に応じたXPを獲得し、貯まるとレベルアップします。BランクやAランクを達成すると追加ボーナスXPがもらえます。</p>
     <p style="font-size:13px"><b>さぼり日数</b><br>C/Dランクの日が3日続くと、レベルとXPが少し下がります（ペース調整）。</p>
     <p style="font-size:13px"><b>日付が変わると</b><br>アプリを開いたときに日付が変わっていれば、自動で今日の結果を履歴に保存し、タスク一覧をリセットします。</p>
-    <p style="font-size:13px">データは他の人と共有されず、この端末のブラウザだけに保存されます。</p>
+    <p style="font-size:13px">データは他の人と共有されず、この端末のブラウザだけに保存されます。設定タブの「クラウド同期」で同期コードを設定すると、同じコードを入れた別の端末（スマホ・PCなど）とデータを共有できます。</p>
   </div>
 </div>
 
@@ -345,6 +363,7 @@ table tr.clickable:hover{background:var(--purple-bg)}
 'use strict';
 const STORAGE_KEY = 'ikeshiro_task_manager_v1';
 const MAX_TASKS = 20;
+const FIREBASE_DB_URL = '';
 
 function defaultState(){
   return {
@@ -353,7 +372,8 @@ function defaultState(){
     tags: ['仕事','勉強','運動','生活'],
     todayTasks: [],
     reflectionNote: '', refreshDay: false,
-    history: [], taskHistory: [], bank: []
+    history: [], taskHistory: [], bank: [],
+    updatedAt: 0, syncCode: '', syncEnabled: false, lastSyncAt: null
   };
 }
 
@@ -372,7 +392,8 @@ function loadState(){
     return defaultState();
   }
 }
-function save(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+function persistLocal(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+function save(){ state.updatedAt = Date.now(); persistLocal(); scheduleSyncPush(); }
 
 function escapeHtml(s){
   return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -687,6 +708,64 @@ function buildAnalysisPrompt(mode){
   return prompt;
 }
 
+/* ---------- cloud sync ---------- */
+let syncPushTimer = null;
+function scheduleSyncPush(){
+  if(!state.syncEnabled || !state.syncCode || !FIREBASE_DB_URL) return;
+  if(syncPushTimer) clearTimeout(syncPushTimer);
+  syncPushTimer = setTimeout(()=> pushToCloud(false), 1500);
+}
+function randomSyncCode(){
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const arr = new Uint8Array(10);
+  crypto.getRandomValues(arr);
+  let out = '';
+  for(let i=0;i<10;i++){
+    out += chars[arr[i] % chars.length];
+    if(i===4) out += '-';
+  }
+  return out;
+}
+async function pushToCloud(manual){
+  if(!FIREBASE_DB_URL){ if(manual) toast('同期先が未設定です。設定が完了するまでお待ちください。'); return; }
+  if(!state.syncCode){ if(manual) toast('同期コードを入力してください。'); return; }
+  try{
+    const res = await fetch(`${FIREBASE_DB_URL}/sync/${encodeURIComponent(state.syncCode)}.json`, {
+      method: 'PUT', body: JSON.stringify(state)
+    });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    state.lastSyncAt = Date.now();
+    persistLocal();
+    renderSettings();
+    if(manual) toast('クラウドにアップロードしました。');
+  }catch(e){
+    if(manual) toast('アップロードに失敗しました。通信環境を確認してください。');
+  }
+}
+async function pullFromCloud(manual){
+  if(!FIREBASE_DB_URL){ if(manual) toast('同期先が未設定です。設定が完了するまでお待ちください。'); return; }
+  if(!state.syncCode){ if(manual) toast('同期コードを入力してください。'); return; }
+  if(manual && !confirm('クラウドの内容でこの端末のデータを上書きします。よろしいですか？')) return;
+  try{
+    const res = await fetch(`${FIREBASE_DB_URL}/sync/${encodeURIComponent(state.syncCode)}.json`);
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const remote = await res.json();
+    if(!remote){ if(manual) toast('クラウドにまだデータがありません。先にアップロードしてください。'); return; }
+    if(manual || (remote.updatedAt||0) > (state.updatedAt||0)){
+      const code = state.syncCode, enabled = state.syncEnabled;
+      state = Object.assign(defaultState(), remote);
+      state.syncCode = code; state.syncEnabled = enabled;
+      state.lastSyncAt = Date.now();
+      persistLocal(); render();
+      if(manual) toast('クラウドからダウンロードしました。');
+    } else if(manual===false){
+      // silent check: nothing newer, no-op
+    }
+  }catch(e){
+    if(manual) toast('ダウンロードに失敗しました。通信環境を確認してください。');
+  }
+}
+
 /* ---------- toast ---------- */
 function toast(msg){
   const wrap = document.getElementById('toastwrap');
@@ -840,6 +919,20 @@ function renderSettings(){
   const bLine = state.bLineLocked!=null ? state.bLineLocked : bLineComputedToday();
   document.getElementById('setBline').textContent = Math.round(bLine*100)+'%';
   document.getElementById('setLastDate').textContent = state.lastDate ? fmtDate(state.lastDate) : '（未設定）';
+
+  document.getElementById('syncCodeInput').value = state.syncCode || '';
+  document.getElementById('syncEnabled').checked = !!state.syncEnabled;
+  const statusEl = document.getElementById('syncStatus');
+  if(!FIREBASE_DB_URL){
+    statusEl.textContent = '（同期先は準備中です。設定が完了するとここから使えるようになります）';
+  } else if(!state.syncCode){
+    statusEl.textContent = 'コードを生成または入力してください。';
+  } else {
+    statusEl.textContent = state.lastSyncAt ? `最終同期: ${new Date(state.lastSyncAt).toLocaleString('ja-JP')}` : 'まだ同期していません。';
+  }
+  document.getElementById('footerNote').textContent = (state.syncEnabled && state.syncCode)
+    ? 'データはこの端末と、指定したクラウド同期先に保存されます。'
+    : '全データはこの端末のブラウザにだけ保存されます（外部送信なし）';
 }
 
 /* ---------- day detail ---------- */
@@ -1032,6 +1125,28 @@ document.getElementById('tagList').addEventListener('click', e=>{
   save(); render();
 });
 
+/* cloud sync events */
+document.getElementById('btnGenCode').addEventListener('click', ()=>{
+  document.getElementById('syncCodeInput').value = randomSyncCode();
+  document.getElementById('syncCodeInput').dispatchEvent(new Event('change'));
+});
+document.getElementById('syncCodeInput').addEventListener('change', e=>{
+  state.syncCode = e.target.value.trim().toUpperCase();
+  save(); renderSettings();
+});
+document.getElementById('syncEnabled').addEventListener('change', e=>{
+  state.syncEnabled = e.target.checked;
+  if(state.syncEnabled && !state.syncCode){
+    toast('先に同期コードを設定してください。');
+    state.syncEnabled = false;
+    e.target.checked = false;
+    return;
+  }
+  save(); renderSettings();
+});
+document.getElementById('btnSyncPush').addEventListener('click', ()=> pushToCloud(true));
+document.getElementById('btnSyncPull').addEventListener('click', ()=> pullFromCloud(true));
+
 /* export / import / reset */
 document.getElementById('btnExport').addEventListener('click', ()=>{
   const blob = new Blob([JSON.stringify(state, null, 2)], {type:'application/json'});
@@ -1069,8 +1184,9 @@ document.getElementById('btnResetAll').addEventListener('click', ()=>{
 /* ---------- init ---------- */
 checkDayRollover(true);
 render();
-setInterval(()=> checkDayRollover(true), 60000);
-window.addEventListener('focus', ()=> checkDayRollover(true));
+if(state.syncEnabled && state.syncCode) pullFromCloud(false).then(render);
+setInterval(()=>{ checkDayRollover(true); if(state.syncEnabled && state.syncCode) pullFromCloud(false).then(render); }, 60000);
+window.addEventListener('focus', ()=>{ checkDayRollover(true); if(state.syncEnabled && state.syncCode) pullFromCloud(false).then(render); });
 </script>
 </body>
 </html>
