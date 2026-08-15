@@ -1,0 +1,14 @@
+{
+  "name": "イケシロ式タスク管理",
+  "short_name": "タスク管理",
+  "description": "XP・レベル・ランク判定つきのゲーミフィケーション型タスク管理アプリ",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#f7f6f8",
+  "theme_color": "#611f69",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
