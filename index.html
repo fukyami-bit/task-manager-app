@@ -283,6 +283,20 @@ table tr.clickable:hover{background:var(--purple-bg)}
     </div>
 
     <div class="card">
+      <h2>AI分析（自分のAPIキー）</h2>
+      <p style="font-size:12px;color:var(--text-sub);margin-top:0">Anthropic（Claude）のAPIキーを登録すると、「AI分析用プロンプトを作る」の画面で、コピペせずにこのアプリ内で直接分析結果を見られるようになります。キーは<b>この端末にだけ保存</b>され、Anthropicへ直接送信されます（利用料金はキーの持ち主自身に発生します）。登録しなくても、これまで通りコピペで使えます。</p>
+      <div class="fg">
+        <label>APIキー（sk-ant- から始まるもの）</label>
+        <input type="password" id="apiKeyInput" placeholder="sk-ant-...">
+      </div>
+      <div class="row">
+        <button class="btn sm" id="btnSaveApiKey">保存</button>
+        <button class="btn sm danger" id="btnClearApiKey">削除</button>
+      </div>
+      <p style="font-size:11.5px;color:var(--text-sub);margin-top:8px" id="apiKeyStatus"></p>
+    </div>
+
+    <div class="card">
       <h2>タグ管理</h2>
       <div class="row">
         <input type="text" id="newTagInput" placeholder="新しいタグ名" style="flex:1;min-width:120px;padding:7px 10px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-family:inherit;font-size:13px">
@@ -322,7 +336,15 @@ table tr.clickable:hover{background:var(--purple-bg)}
     <h3 id="analysisTitle">分析用プロンプト</h3>
     <p style="font-size:12px;color:var(--text-sub)">下のテキストをコピーして、Claudeなどのチャットに貼り付けてください。</p>
     <textarea class="promptbox" id="analysisText" readonly></textarea>
-    <div class="row" style="margin-top:10px"><button class="btn primary" id="btnCopyPrompt">コピーする</button></div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn primary" id="btnCopyPrompt">コピーする</button>
+      <button class="btn" id="btnRunAnalysis" style="display:none">AIに分析してもらう</button>
+    </div>
+    <p style="font-size:11px;color:var(--text-sub);margin-top:6px" id="analysisApiHint"></p>
+    <div id="analysisResultWrap" style="display:none;margin-top:10px">
+      <label style="display:block;font-size:11.5px;color:var(--text-sub);margin-bottom:3px;font-weight:600">AIの分析結果</label>
+      <div class="promptbox" id="analysisResult" style="white-space:pre-wrap"></div>
+    </div>
   </div>
 </div>
 
@@ -354,6 +376,7 @@ table tr.clickable:hover{background:var(--purple-bg)}
     <p style="font-size:13px"><b>さぼり日数</b><br>C/Dランクの日が3日続くと、レベルとXPが少し下がります（ペース調整）。</p>
     <p style="font-size:13px"><b>日付が変わると</b><br>アプリを開いたときに日付が変わっていれば、自動で今日の結果を履歴に保存し、タスク一覧をリセットします。</p>
     <p style="font-size:13px">データは他の人と共有されず、この端末のブラウザだけに保存されます。設定タブの「クラウド同期」で同期コードを設定すると、同じコードを入れた別の端末（スマホ・PCなど）とデータを共有できます。</p>
+    <p style="font-size:13px"><b>AI分析</b><br>設定タブで自分のAnthropic APIキーを登録すると、「AI分析用プロンプトを作る」の画面でコピペせずにAIの回答をそのまま見られます。登録しなくても、これまで通りプロンプトをコピーして使えます。</p>
   </div>
 </div>
 
@@ -364,6 +387,9 @@ table tr.clickable:hover{background:var(--purple-bg)}
 const STORAGE_KEY = 'ikeshiro_task_manager_v1';
 const MAX_TASKS = 20;
 const FIREBASE_DB_URL = 'https://task-sync-81e96-default-rtdb.firebaseio.com';
+const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
+const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
+const API_KEY_STORAGE = 'ikeshiro_task_manager_apikey';
 
 function defaultState(){
   return {
@@ -766,6 +792,35 @@ async function pullFromCloud(manual){
   }
 }
 
+/* ---------- AI analysis (user's own API key) ---------- */
+function loadApiKey(){ return localStorage.getItem(API_KEY_STORAGE) || ''; }
+function saveApiKeyValue(v){ if(v) localStorage.setItem(API_KEY_STORAGE, v); else localStorage.removeItem(API_KEY_STORAGE); }
+let apiKey = loadApiKey();
+
+async function callClaude(promptText){
+  const res = await fetch(CLAUDE_API_URL, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
+    body: JSON.stringify({
+      model: CLAUDE_MODEL,
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: promptText }]
+    })
+  });
+  if(!res.ok){
+    let msg = `HTTP ${res.status}`;
+    try{ const errJson = await res.json(); if(errJson.error && errJson.error.message) msg = errJson.error.message; }catch(e){}
+    throw new Error(msg);
+  }
+  const data = await res.json();
+  return (data.content || []).map(c => c.text || '').join('');
+}
+
 /* ---------- toast ---------- */
 function toast(msg){
   const wrap = document.getElementById('toastwrap');
@@ -933,6 +988,8 @@ function renderSettings(){
   document.getElementById('footerNote').textContent = (state.syncEnabled && state.syncCode)
     ? 'データはこの端末と、指定したクラウド同期先に保存されます。'
     : '全データはこの端末のブラウザにだけ保存されます（外部送信なし）';
+
+  renderApiKeyStatus();
 }
 
 /* ---------- day detail ---------- */
@@ -974,20 +1031,46 @@ document.getElementById('btnAddFromBank').addEventListener('click', ()=>{
   document.querySelector('button[data-tab="bank"]').click();
   toast('バンクの「今日に追加」ボタンからタスクを追加できます。');
 });
-document.getElementById('btnAnalyzeToday').addEventListener('click', ()=>{
-  document.getElementById('analysisTitle').textContent = '今日の分析用プロンプト';
-  document.getElementById('analysisText').value = buildAnalysisPrompt('today');
+function openAnalysisModal(title, mode){
+  document.getElementById('analysisTitle').textContent = title;
+  document.getElementById('analysisText').value = buildAnalysisPrompt(mode);
+  document.getElementById('analysisResultWrap').style.display = 'none';
+  document.getElementById('analysisResult').textContent = '';
+  const runBtn = document.getElementById('btnRunAnalysis');
+  const hint = document.getElementById('analysisApiHint');
+  if(apiKey){
+    runBtn.style.display = '';
+    runBtn.disabled = false;
+    runBtn.textContent = 'AIに分析してもらう';
+    hint.textContent = '';
+  } else {
+    runBtn.style.display = 'none';
+    hint.textContent = '設定タブでAPIキーを登録すると、ここで直接AIの回答を見られます。';
+  }
   openModal('analysisOverlay');
-});
-document.getElementById('btnAnalyzePast14').addEventListener('click', ()=>{
-  document.getElementById('analysisTitle').textContent = '過去14日の分析用プロンプト';
-  document.getElementById('analysisText').value = buildAnalysisPrompt('past14');
-  openModal('analysisOverlay');
-});
+}
+document.getElementById('btnAnalyzeToday').addEventListener('click', ()=> openAnalysisModal('今日の分析用プロンプト', 'today'));
+document.getElementById('btnAnalyzePast14').addEventListener('click', ()=> openAnalysisModal('過去14日の分析用プロンプト', 'past14'));
 document.getElementById('btnCopyPrompt').addEventListener('click', async ()=>{
   const ta = document.getElementById('analysisText');
   try{ await navigator.clipboard.writeText(ta.value); toast('コピーしました。'); }
   catch(e){ ta.select(); document.execCommand('copy'); toast('コピーしました。'); }
+});
+document.getElementById('btnRunAnalysis').addEventListener('click', async ()=>{
+  const btn = document.getElementById('btnRunAnalysis');
+  const wrap = document.getElementById('analysisResultWrap');
+  const resultEl = document.getElementById('analysisResult');
+  const promptText = document.getElementById('analysisText').value;
+  btn.disabled = true; btn.textContent = '分析中…';
+  try{
+    const text = await callClaude(promptText);
+    resultEl.textContent = text;
+    wrap.style.display = '';
+  }catch(e){
+    toast('分析に失敗しました: ' + e.message);
+  }finally{
+    btn.disabled = false; btn.textContent = 'AIに分析してもらう';
+  }
 });
 document.getElementById('btnForceRollover').addEventListener('click', ()=> checkDayRollover(false));
 
@@ -1123,6 +1206,28 @@ document.getElementById('tagList').addEventListener('click', e=>{
   if(!b) return;
   state.tags = state.tags.filter(t=>t!==b.dataset.tag);
   save(); render();
+});
+
+/* AI analysis api key events */
+function renderApiKeyStatus(){
+  document.getElementById('apiKeyStatus').textContent = apiKey ? 'APIキー: 設定済み' : 'APIキー: 未設定';
+  document.getElementById('apiKeyInput').value = '';
+}
+document.getElementById('btnSaveApiKey').addEventListener('click', ()=>{
+  const v = document.getElementById('apiKeyInput').value.trim();
+  if(!v){ toast('APIキーを入力してください。'); return; }
+  apiKey = v;
+  saveApiKeyValue(apiKey);
+  renderApiKeyStatus();
+  toast('APIキーを保存しました。');
+});
+document.getElementById('btnClearApiKey').addEventListener('click', ()=>{
+  if(!apiKey){ toast('APIキーは設定されていません。'); return; }
+  if(!confirm('保存されているAPIキーを削除しますか？')) return;
+  apiKey = '';
+  saveApiKeyValue('');
+  renderApiKeyStatus();
+  toast('APIキーを削除しました。');
 });
 
 /* cloud sync events */
