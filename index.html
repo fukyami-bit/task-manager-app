@@ -138,6 +138,9 @@ table tr.clickable:hover{background:var(--purple-bg)}
 .chat-msg.assistant{align-self:flex-start;background:var(--bg);border:1px solid var(--border);border-bottom-left-radius:4px}
 .chat-msg.user{align-self:flex-end;background:var(--purple);color:#fff;border-bottom-right-radius:4px}
 .chat-msg.pending{opacity:.6}
+.cal-event{display:flex;gap:8px;align-items:baseline;font-size:12.5px;padding:5px 0;border-bottom:1px solid var(--border)}
+.cal-event:last-child{border-bottom:none}
+.cal-event .t{color:var(--text-sub);font-weight:600;min-width:88px}
 
 #toastwrap{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:300;display:flex;flex-direction:column;gap:8px;align-items:center;max-width:92vw}
 .toast{background:var(--purple);color:#fff;padding:10px 16px;border-radius:20px;font-size:13px;box-shadow:var(--shadow);white-space:pre-line;text-align:center;animation:tin .18s ease-out}
@@ -200,6 +203,16 @@ table tr.clickable:hover{background:var(--purple-bg)}
         <textarea id="reflectionNote" placeholder="今日はどうだった？"></textarea>
       </div>
       <label class="checkline"><input type="checkbox" id="refreshDay"> リフレッシュ日（頭を空っぽにする日）</label>
+    </div>
+
+    <div class="card">
+      <h2>Googleカレンダー連携</h2>
+      <p style="font-size:12.5px;color:var(--text-sub);margin-top:0" id="googleCalHint">連携すると、今日の予定を取り込んで、タスクと合わせたスケジュール作成にAIを使えます。この端末・このブラウザだけで完結し、予定はどこにも保存されません。</p>
+      <div class="row">
+        <button class="btn" id="btnConnectGoogle">Googleカレンダーと連携</button>
+        <button class="btn" id="btnMakeSchedule" style="display:none">予定とタスクからスケジュールを組む</button>
+      </div>
+      <div id="googleEventsList" style="margin-top:10px"></div>
     </div>
 
     <div class="card">
@@ -399,6 +412,8 @@ const FIREBASE_DB_URL = 'https://task-sync-81e96-default-rtdb.firebaseio.com';
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
 const API_KEY_STORAGE = 'ikeshiro_task_manager_apikey';
+const GOOGLE_CLIENT_ID = '529390802447-vhcvsnrj69k7ug0t7ija5noijtrrnmra.apps.googleusercontent.com';
+const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
 
 function defaultState(){
   return {
@@ -831,6 +846,122 @@ async function callClaudeMessages(messages){
   return (data.content || []).map(c => c.text || '').join('');
 }
 
+/* ---------- Google Calendar ---------- */
+let gisTokenClient = null;
+let googleAccessToken = null;
+let googleAccessTokenExpiry = 0;
+let todayCalendarEvents = [];
+
+function loadGisScript(){
+  return new Promise((resolve, reject)=>{
+    if(window.google && window.google.accounts && window.google.accounts.oauth2) return resolve();
+    const existing = document.getElementById('gis-script');
+    if(existing){ existing.addEventListener('load', ()=>resolve()); existing.addEventListener('error', ()=>reject(new Error('読み込みに失敗しました。'))); return; }
+    const s = document.createElement('script');
+    s.id = 'gis-script';
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.async = true; s.defer = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('Google連携用スクリプトの読み込みに失敗しました。'));
+    document.head.appendChild(s);
+  });
+}
+
+async function connectGoogleCalendar(){
+  if(!GOOGLE_CLIENT_ID){ toast('Googleカレンダー連携はまだ準備中です。'); return; }
+  try{
+    await loadGisScript();
+  }catch(e){
+    toast(e.message);
+    return;
+  }
+  if(!gisTokenClient){
+    gisTokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: GOOGLE_CALENDAR_SCOPE,
+      callback: (resp) => {
+        if(resp.error){ toast('連携に失敗しました: ' + resp.error); return; }
+        googleAccessToken = resp.access_token;
+        googleAccessTokenExpiry = Date.now() + (Number(resp.expires_in)||3600) * 1000;
+        toast('Googleカレンダーと連携しました。');
+        fetchTodayEvents();
+      }
+    });
+  }
+  gisTokenClient.requestAccessToken();
+}
+
+async function fetchTodayEvents(){
+  if(!googleAccessToken) return;
+  const now = new Date();
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+  const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()+1).toISOString();
+  const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?` +
+    `timeMin=${encodeURIComponent(startOfDay)}&timeMax=${encodeURIComponent(endOfDay)}&singleEvents=true&orderBy=startTime`;
+  try{
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${googleAccessToken}` } });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    todayCalendarEvents = (data.items || []).map(ev => ({
+      title: ev.summary || '(タイトルなし)',
+      start: ev.start && (ev.start.dateTime || ev.start.date),
+      end: ev.end && (ev.end.dateTime || ev.end.date),
+      allDay: !(ev.start && ev.start.dateTime)
+    }));
+    renderCalendarEvents();
+  }catch(e){
+    toast('予定の取得に失敗しました。もう一度連携し直してください。');
+  }
+}
+
+function fmtEventTime(iso, allDay){
+  if(!iso) return '';
+  if(allDay) return '終日';
+  const d = new Date(iso);
+  return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+}
+
+function renderCalendarEvents(){
+  const wrap = document.getElementById('googleEventsList');
+  const makeBtn = document.getElementById('btnMakeSchedule');
+  if(!googleAccessToken){
+    wrap.innerHTML = '';
+    makeBtn.style.display = 'none';
+    return;
+  }
+  makeBtn.style.display = '';
+  if(todayCalendarEvents.length === 0){
+    wrap.innerHTML = '<p style="font-size:12px;color:var(--text-sub)">今日の予定はありません。</p>';
+    return;
+  }
+  wrap.innerHTML = todayCalendarEvents.map(ev =>
+    `<div class="cal-event"><span class="t">${escapeHtml(fmtEventTime(ev.start, ev.allDay))}</span><span>${escapeHtml(ev.title)}</span></div>`
+  ).join('');
+}
+
+function buildSchedulePrompt(){
+  const now = new Date();
+  let prompt = 'あなたは優秀なスケジューリングアシスタントです。以下の「今日の予定」と「今日のタスク一覧」をもとに、現実的な1日のスケジュール表を作ってください。既存の予定は動かさず、タスクをその合間に無理のない形で配置してください。表形式（時刻 | 内容）でお願いします。\n\n';
+  prompt += `現在時刻: ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}\n\n`;
+  prompt += '今日の予定（カレンダー）:\n';
+  if(todayCalendarEvents.length === 0){
+    prompt += '(予定なし)\n';
+  } else {
+    todayCalendarEvents.forEach(ev => {
+      const timeLabel = ev.allDay ? '終日' : `${fmtEventTime(ev.start, false)}〜${fmtEventTime(ev.end, false)}`;
+      prompt += `- ${timeLabel} ${ev.title}\n`;
+    });
+  }
+  prompt += '\n今日のタスク一覧:\n';
+  state.todayTasks.forEach(t=>{
+    if(!t.name) return;
+    prompt += `- ${t.name} [予定:${t.estMin}分] [${statusOf(t)}]`;
+    if(t.tag) prompt += ` [タグ:${t.tag}]`;
+    prompt += '\n';
+  });
+  return prompt;
+}
+
 function renderChat(){
   const chat = document.getElementById('analysisChat');
   chat.innerHTML = analysisMessages.slice(1).map(m=>
@@ -1049,9 +1180,10 @@ document.getElementById('btnAddFromBank').addEventListener('click', ()=>{
   document.querySelector('button[data-tab="bank"]').click();
   toast('バンクの「今日に追加」ボタンからタスクを追加できます。');
 });
-function openAnalysisModal(title, mode){
+document.getElementById('btnConnectGoogle').addEventListener('click', connectGoogleCalendar);
+function openAnalysisModal(title, promptText){
   document.getElementById('analysisTitle').textContent = title;
-  document.getElementById('analysisText').value = buildAnalysisPrompt(mode);
+  document.getElementById('analysisText').value = promptText;
   document.getElementById('analysisResultWrap').style.display = 'none';
   analysisMessages = [];
   renderChat();
@@ -1068,8 +1200,9 @@ function openAnalysisModal(title, mode){
   }
   openModal('analysisOverlay');
 }
-document.getElementById('btnAnalyzeToday').addEventListener('click', ()=> openAnalysisModal('今日の分析用プロンプト', 'today'));
-document.getElementById('btnAnalyzePast14').addEventListener('click', ()=> openAnalysisModal('過去14日の分析用プロンプト', 'past14'));
+document.getElementById('btnAnalyzeToday').addEventListener('click', ()=> openAnalysisModal('今日の分析用プロンプト', buildAnalysisPrompt('today')));
+document.getElementById('btnAnalyzePast14').addEventListener('click', ()=> openAnalysisModal('過去14日の分析用プロンプト', buildAnalysisPrompt('past14')));
+document.getElementById('btnMakeSchedule').addEventListener('click', ()=> openAnalysisModal('今日のスケジュール案', buildSchedulePrompt()));
 document.getElementById('btnCopyPrompt').addEventListener('click', async ()=>{
   const ta = document.getElementById('analysisText');
   try{ await navigator.clipboard.writeText(ta.value); toast('コピーしました。'); }
