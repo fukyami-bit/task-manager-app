@@ -1114,7 +1114,10 @@ document.getElementById('btnAnalysisSend').addEventListener('click', ()=>{
   sendAnalysisTurn(text, document.getElementById('btnAnalysisSend'));
 });
 document.getElementById('analysisFollowupInput').addEventListener('keydown', e=>{
-  if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('btnAnalysisSend').click(); }
+  if(e.key === 'Enter' && !e.isComposing && e.keyCode !== 229){
+    e.preventDefault();
+    document.getElementById('btnAnalysisSend').click();
+  }
 });
 document.getElementById('btnForceRollover').addEventListener('click', ()=> checkDayRollover(false));
 
