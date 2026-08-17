@@ -133,6 +133,11 @@ table tr.clickable:hover{background:var(--purple-bg)}
 .modal h3{margin:0 0 12px;font-size:15px}
 .modal .close{float:right;background:none;border:none;font-size:16px;cursor:pointer;color:var(--text-sub)}
 .promptbox{width:100%;min-height:220px;font-size:12px;font-family:ui-monospace,Menlo,monospace;padding:10px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);white-space:pre-wrap;resize:vertical}
+.chat-thread{display:flex;flex-direction:column;gap:8px;max-height:340px;overflow-y:auto;padding:4px 2px}
+.chat-msg{max-width:85%;padding:8px 12px;border-radius:14px;font-size:13px;white-space:pre-wrap;line-height:1.5}
+.chat-msg.assistant{align-self:flex-start;background:var(--bg);border:1px solid var(--border);border-bottom-left-radius:4px}
+.chat-msg.user{align-self:flex-end;background:var(--purple);color:#fff;border-bottom-right-radius:4px}
+.chat-msg.pending{opacity:.6}
 
 #toastwrap{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:300;display:flex;flex-direction:column;gap:8px;align-items:center;max-width:92vw}
 .toast{background:var(--purple);color:#fff;padding:10px 16px;border-radius:20px;font-size:13px;box-shadow:var(--shadow);white-space:pre-line;text-align:center;animation:tin .18s ease-out}
@@ -342,8 +347,12 @@ table tr.clickable:hover{background:var(--purple-bg)}
     </div>
     <p style="font-size:11px;color:var(--text-sub);margin-top:6px" id="analysisApiHint"></p>
     <div id="analysisResultWrap" style="display:none;margin-top:10px">
-      <label style="display:block;font-size:11.5px;color:var(--text-sub);margin-bottom:3px;font-weight:600">AIの分析結果</label>
-      <div class="promptbox" id="analysisResult" style="white-space:pre-wrap"></div>
+      <label style="display:block;font-size:11.5px;color:var(--text-sub);margin-bottom:3px;font-weight:600">AIとの会話（続けて相談できます）</label>
+      <div class="chat-thread" id="analysisChat"></div>
+      <div class="row" style="margin-top:8px">
+        <input type="text" id="analysisFollowupInput" placeholder="続けて質問・相談する" style="flex:1;min-width:120px;padding:8px 10px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-family:inherit;font-size:13px">
+        <button class="btn primary sm" id="btnAnalysisSend">送信</button>
+      </div>
     </div>
   </div>
 </div>
@@ -796,8 +805,9 @@ async function pullFromCloud(manual){
 function loadApiKey(){ return localStorage.getItem(API_KEY_STORAGE) || ''; }
 function saveApiKeyValue(v){ if(v) localStorage.setItem(API_KEY_STORAGE, v); else localStorage.removeItem(API_KEY_STORAGE); }
 let apiKey = loadApiKey();
+let analysisMessages = [];
 
-async function callClaude(promptText){
+async function callClaudeMessages(messages){
   const res = await fetch(CLAUDE_API_URL, {
     method: 'POST',
     headers: {
@@ -809,7 +819,7 @@ async function callClaude(promptText){
     body: JSON.stringify({
       model: CLAUDE_MODEL,
       max_tokens: 1024,
-      messages: [{ role: 'user', content: promptText }]
+      messages
     })
   });
   if(!res.ok){
@@ -819,6 +829,14 @@ async function callClaude(promptText){
   }
   const data = await res.json();
   return (data.content || []).map(c => c.text || '').join('');
+}
+
+function renderChat(){
+  const chat = document.getElementById('analysisChat');
+  chat.innerHTML = analysisMessages.slice(1).map(m=>
+    `<div class="chat-msg ${m.role}">${escapeHtml(m.content)}</div>`
+  ).join('');
+  chat.scrollTop = chat.scrollHeight;
 }
 
 /* ---------- toast ---------- */
@@ -1035,7 +1053,8 @@ function openAnalysisModal(title, mode){
   document.getElementById('analysisTitle').textContent = title;
   document.getElementById('analysisText').value = buildAnalysisPrompt(mode);
   document.getElementById('analysisResultWrap').style.display = 'none';
-  document.getElementById('analysisResult').textContent = '';
+  analysisMessages = [];
+  renderChat();
   const runBtn = document.getElementById('btnRunAnalysis');
   const hint = document.getElementById('analysisApiHint');
   if(apiKey){
@@ -1045,7 +1064,7 @@ function openAnalysisModal(title, mode){
     hint.textContent = '';
   } else {
     runBtn.style.display = 'none';
-    hint.textContent = '設定タブでAPIキーを登録すると、ここで直接AIの回答を見られます。';
+    hint.textContent = '設定タブでAPIキーを登録すると、ここで直接AIの回答を見られ、続けて相談もできます。';
   }
   openModal('analysisOverlay');
 }
@@ -1056,21 +1075,46 @@ document.getElementById('btnCopyPrompt').addEventListener('click', async ()=>{
   try{ await navigator.clipboard.writeText(ta.value); toast('コピーしました。'); }
   catch(e){ ta.select(); document.execCommand('copy'); toast('コピーしました。'); }
 });
-document.getElementById('btnRunAnalysis').addEventListener('click', async ()=>{
-  const btn = document.getElementById('btnRunAnalysis');
+let analysisSending = false;
+async function sendAnalysisTurn(userText, btn){
+  if(analysisSending) return;
+  analysisSending = true;
   const wrap = document.getElementById('analysisResultWrap');
-  const resultEl = document.getElementById('analysisResult');
-  const promptText = document.getElementById('analysisText').value;
-  btn.disabled = true; btn.textContent = '分析中…';
+  const runBtn = document.getElementById('btnRunAnalysis');
+  const sendBtn = document.getElementById('btnAnalysisSend');
+  const input = document.getElementById('analysisFollowupInput');
+  analysisMessages.push({ role: 'user', content: userText });
+  renderChat();
+  wrap.style.display = '';
+  runBtn.disabled = true; sendBtn.disabled = true; input.disabled = true;
+  btn.textContent = btn.id === 'btnRunAnalysis' ? '分析中…' : '送信中…';
   try{
-    const text = await callClaude(promptText);
-    resultEl.textContent = text;
-    wrap.style.display = '';
+    const reply = await callClaudeMessages(analysisMessages);
+    analysisMessages.push({ role: 'assistant', content: reply });
+    renderChat();
   }catch(e){
-    toast('分析に失敗しました: ' + e.message);
+    analysisMessages.pop();
+    renderChat();
+    toast('送信に失敗しました: ' + e.message);
   }finally{
-    btn.disabled = false; btn.textContent = 'AIに分析してもらう';
+    runBtn.disabled = false; sendBtn.disabled = false; input.disabled = false;
+    runBtn.textContent = 'AIに分析してもらう';
+    sendBtn.textContent = '送信';
+    analysisSending = false;
   }
+}
+document.getElementById('btnRunAnalysis').addEventListener('click', ()=>{
+  sendAnalysisTurn(document.getElementById('analysisText').value, document.getElementById('btnRunAnalysis'));
+});
+document.getElementById('btnAnalysisSend').addEventListener('click', ()=>{
+  const input = document.getElementById('analysisFollowupInput');
+  const text = input.value.trim();
+  if(!text) return;
+  input.value = '';
+  sendAnalysisTurn(text, document.getElementById('btnAnalysisSend'));
+});
+document.getElementById('analysisFollowupInput').addEventListener('keydown', e=>{
+  if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('btnAnalysisSend').click(); }
 });
 document.getElementById('btnForceRollover').addEventListener('click', ()=> checkDayRollover(false));
 
