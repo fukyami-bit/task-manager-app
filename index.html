@@ -1113,12 +1113,20 @@ document.getElementById('btnAnalysisSend').addEventListener('click', ()=>{
   input.value = '';
   sendAnalysisTurn(text, document.getElementById('btnAnalysisSend'));
 });
-document.getElementById('analysisFollowupInput').addEventListener('keydown', e=>{
-  if(e.key === 'Enter' && !e.isComposing && e.keyCode !== 229){
+(function(){
+  const followupInput = document.getElementById('analysisFollowupInput');
+  let imeComposing = false;
+  let imeEndedAt = 0;
+  followupInput.addEventListener('compositionstart', ()=>{ imeComposing = true; });
+  followupInput.addEventListener('compositionend', ()=>{ imeComposing = false; imeEndedAt = Date.now(); });
+  followupInput.addEventListener('keydown', e=>{
+    if(e.key !== 'Enter') return;
+    if(imeComposing || e.isComposing || e.keyCode === 229) return;
+    if(Date.now() - imeEndedAt < 50) return;
     e.preventDefault();
     document.getElementById('btnAnalysisSend').click();
-  }
-});
+  });
+})();
 document.getElementById('btnForceRollover').addEventListener('click', ()=> checkDayRollover(false));
 
 document.getElementById('reflectionNote').addEventListener('input', e=>{ state.reflectionNote = e.target.value; save(); });
