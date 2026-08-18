@@ -215,6 +215,15 @@ table tr.clickable:hover{background:var(--purple-bg)}
       <div id="googleEventsList" style="margin-top:10px"></div>
     </div>
 
+    <div class="card" id="scheduleCard" style="display:none">
+      <div class="row-between">
+        <h2 style="margin:0">今日のスケジュール案</h2>
+        <button class="btn sm" id="btnClearSchedule">クリア</button>
+      </div>
+      <div class="promptbox" id="scheduleCardText" style="white-space:pre-wrap"></div>
+      <p style="font-size:11px;color:var(--text-sub);margin-top:6px" id="scheduleCardMeta"></p>
+    </div>
+
     <div class="card">
       <h2>AI分析用プロンプトを作る</h2>
       <p style="font-size:12.5px;color:var(--text-sub);margin-top:0">今日または過去14日のデータから、Claudeなどに貼り付けて使えるコーチング用プロンプトを生成します。</p>
@@ -423,7 +432,8 @@ function defaultState(){
     todayTasks: [],
     reflectionNote: '', refreshDay: false,
     history: [], taskHistory: [], bank: [],
-    updatedAt: 0, syncCode: '', syncEnabled: false, lastSyncAt: null
+    updatedAt: 0, syncCode: '', syncEnabled: false, lastSyncAt: null,
+    scheduleText: '', scheduleGeneratedAt: null
   };
 }
 
@@ -1003,12 +1013,22 @@ function render(){
   renderTaskList();
   document.getElementById('reflectionNote').value = state.reflectionNote || '';
   document.getElementById('refreshDay').checked = !!state.refreshDay;
+  renderScheduleCard();
 
   renderHistory();
   renderTaskLog();
   renderBank();
   renderTags();
   renderSettings();
+}
+
+function renderScheduleCard(){
+  const card = document.getElementById('scheduleCard');
+  if(!state.scheduleText){ card.style.display = 'none'; return; }
+  card.style.display = '';
+  document.getElementById('scheduleCardText').textContent = state.scheduleText;
+  document.getElementById('scheduleCardMeta').textContent = state.scheduleGeneratedAt
+    ? `作成: ${new Date(state.scheduleGeneratedAt).toLocaleString('ja-JP')}` : '';
 }
 
 function tagOptions(selected){
@@ -1181,7 +1201,15 @@ document.getElementById('btnAddFromBank').addEventListener('click', ()=>{
   toast('バンクの「今日に追加」ボタンからタスクを追加できます。');
 });
 document.getElementById('btnConnectGoogle').addEventListener('click', connectGoogleCalendar);
-function openAnalysisModal(title, promptText){
+document.getElementById('btnClearSchedule').addEventListener('click', ()=>{
+  state.scheduleText = '';
+  state.scheduleGeneratedAt = null;
+  save();
+  renderScheduleCard();
+});
+let currentAnalysisMode = null;
+function openAnalysisModal(title, promptText, mode){
+  currentAnalysisMode = mode || null;
   document.getElementById('analysisTitle').textContent = title;
   document.getElementById('analysisText').value = promptText;
   document.getElementById('analysisResultWrap').style.display = 'none';
@@ -1202,7 +1230,7 @@ function openAnalysisModal(title, promptText){
 }
 document.getElementById('btnAnalyzeToday').addEventListener('click', ()=> openAnalysisModal('今日の分析用プロンプト', buildAnalysisPrompt('today')));
 document.getElementById('btnAnalyzePast14').addEventListener('click', ()=> openAnalysisModal('過去14日の分析用プロンプト', buildAnalysisPrompt('past14')));
-document.getElementById('btnMakeSchedule').addEventListener('click', ()=> openAnalysisModal('今日のスケジュール案', buildSchedulePrompt()));
+document.getElementById('btnMakeSchedule').addEventListener('click', ()=> openAnalysisModal('今日のスケジュール案', buildSchedulePrompt(), 'schedule'));
 document.getElementById('btnCopyPrompt').addEventListener('click', async ()=>{
   const ta = document.getElementById('analysisText');
   try{ await navigator.clipboard.writeText(ta.value); toast('コピーしました。'); }
@@ -1225,6 +1253,12 @@ async function sendAnalysisTurn(userText, btn){
     const reply = await callClaudeMessages(analysisMessages);
     analysisMessages.push({ role: 'assistant', content: reply });
     renderChat();
+    if(currentAnalysisMode === 'schedule'){
+      state.scheduleText = reply;
+      state.scheduleGeneratedAt = Date.now();
+      save();
+      renderScheduleCard();
+    }
   }catch(e){
     analysisMessages.pop();
     renderChat();
