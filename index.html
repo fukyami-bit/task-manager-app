@@ -459,6 +459,10 @@ function escapeHtml(s){
   return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 function clamp(v,lo,hi){ return v<lo?lo:(v>hi?hi:v); }
+function fmtClock(ms){
+  const d = new Date(ms);
+  return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+}
 function todayStr(){
   const d = new Date();
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -1063,6 +1067,7 @@ function renderTaskList(){
       </div>
       <div class="task-meta">
         <span class="badge ${badgeClass}">${status}</span>
+        ${t.startAt && !t.endAt ? `<span>開始: ${fmtClock(t.startAt)}</span><span>終了目安: ${fmtClock(t.startAt + (Number(t.estMin)||0)*60000 + (t.pausedSec||0)*1000 + (t.pauseAt ? (Date.now()-t.pauseAt) : 0))}</span>` : ''}
         ${am!==null?`<span>実績: ${am}分</span>`:''}
         ${t.lineLabel?`<span class="badge line">${t.lineLabel}</span>`:''}
       </div>
