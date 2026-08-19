@@ -491,16 +491,19 @@ function capLine(avg14){ const b = baseLine(); return avg14===null ? b : Math.mi
 function bLineComputedToday(){ return Math.min(baseLine(), capLine(avgRate14())); }
 
 function aMinusLineOf(bLine){ return (bLine + 1) / 2; }
-function computeRank(){
-  const t = totalMin(), d = doneMin();
+function rankFromMinutes(d, t, bLine){
   if(t===0) return 'ー';
-  const bLine = state.bLineLocked!=null ? state.bLineLocked : bLineComputedToday();
   const aMinusLine = aMinusLineOf(bLine);
   if(d>=t) return 'A';
   if(d>=t*aMinusLine) return 'A-';
   if(d>=t*bLine) return 'B';
   if(d>=t*bLine*0.65) return 'C';
   return 'D';
+}
+function computeRank(){
+  const t = totalMin(), d = doneMin();
+  const bLine = state.bLineLocked!=null ? state.bLineLocked : bLineComputedToday();
+  return rankFromMinutes(d, t, bLine);
 }
 function rankBadgeClass(rank){ return rank==='ー' ? 'dash' : rank==='A-' ? 'Aminus' : rank; }
 function statusOf(t){ if(t.endAt) return '完了'; if(t.pauseAt) return '一時停止中'; if(t.startAt) return '実行中'; return '未着手'; }
@@ -715,7 +718,8 @@ function checkDayRollover(silent){
 
   state.history.push({
     date: lastDate, doneMin: doneM, totalMin: totalM, rank,
-    note: state.reflectionNote||'', refreshDay: !!state.refreshDay
+    note: state.reflectionNote||'', refreshDay: !!state.refreshDay,
+    bLine: state.bLineLocked!=null ? state.bLineLocked : bLineComputedToday()
   });
 
   const log = [];
@@ -1180,6 +1184,18 @@ function renderSettings(){
   renderApiKeyStatus();
 }
 
+function recomputeHistoryRank(date){
+  const hist = state.history.find(h=>h.date===date);
+  if(!hist) return;
+  const items = state.taskHistory.filter(t=>t.date===date);
+  const total = items.reduce((s,t)=> s + (Number(t.estMin)||0), 0);
+  const done = items.reduce((s,t)=> s + (t.done==='Done' ? (Number(t.estMin)||0) : 0), 0);
+  const bLine = hist.bLine!=null ? hist.bLine : bLineComputedToday();
+  hist.doneMin = done;
+  hist.totalMin = total;
+  hist.rank = rankFromMinutes(done, total, bLine);
+}
+
 /* ---------- day detail ---------- */
 function showDayDetail(date){
   const h = state.history.find(x=>x.date===date);
@@ -1371,7 +1387,8 @@ document.getElementById('tasklogBody').addEventListener('click', e=>{
   const idx = Number(b.dataset.idx);
   const item = state.taskHistory[idx];
   item.done = item.done==='Done' ? 'Not done' : 'Done';
-  save(); renderTaskLog();
+  recomputeHistoryRank(item.date);
+  save(); renderTaskLog(); renderHistory(); renderSettings();
 });
 
 /* bank modal */
