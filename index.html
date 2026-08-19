@@ -62,6 +62,7 @@ header.top{position:sticky;top:0;z-index:20;background:var(--bg);padding-top:8px
 .xpbar > div{height:100%;background:var(--purple);border-radius:4px;transition:width .3s}
 .rankpill{display:inline-block;font-weight:800;font-size:15px;padding:1px 10px;border-radius:20px}
 .rankpill.A{color:var(--rankA);background:var(--rankA-bg)}
+.rankpill.Aminus{color:var(--rankA);background:var(--rankA-bg)}
 .rankpill.B{color:var(--rankB);background:var(--rankB-bg)}
 .rankpill.C{color:var(--rankC);background:var(--rankC-bg)}
 .rankpill.D{color:var(--rankD);background:var(--rankD-bg)}
@@ -402,7 +403,7 @@ table tr.clickable:hover{background:var(--purple-bg)}
     <button class="close" onclick="closeModal('helpOverlay')">✕</button>
     <h3>使い方</h3>
     <p style="font-size:13px">今日やるタスクを名前・タグ・予定時間（分）で登録し、開始→完了で記録していく、ゲーミフィケーション付きのタスク管理アプリです。</p>
-    <p style="font-size:13px"><b>ランク（A〜D）</b><br>予定していた時間のうち、実際に完了した時間の割合で今日のランクが決まります。Aは全完了、B/Cはその日の目標ライン（直近の実績にあわせて自動調整）に到達、Dはそれ未満です。</p>
+    <p style="font-size:13px"><b>ランク（A〜D）</b><br>予定していた時間のうち、実際に完了した時間の割合で今日のランクが決まります。Aは全完了、A-はBラインと100%のちょうど中間くらい、B/Cはその日の目標ライン（直近の実績にあわせて自動調整）に到達、Dはそれ未満です。</p>
     <p style="font-size:13px"><b>XPとレベル</b><br>タスク完了で見積もりの精度に応じたXPを獲得し、貯まるとレベルアップします。BランクやAランクを達成すると追加ボーナスXPがもらえます。</p>
     <p style="font-size:13px"><b>さぼり日数</b><br>C/Dランクの日が3日続くと、レベルとXPが少し下がります（ペース調整）。</p>
     <p style="font-size:13px"><b>日付が変わると</b><br>アプリを開いたときに日付が変わっていれば、自動で今日の結果を履歴に保存し、タスク一覧をリセットします。</p>
@@ -427,7 +428,7 @@ const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly
 function defaultState(){
   return {
     level: 1, xp: 0, missDays: 0, lastDate: null, bLineLocked: null,
-    bonusB: false, bonusA: false,
+    bonusB: false, bonusAMinus: false, bonusA: false,
     tags: ['仕事','勉強','運動','生活'],
     todayTasks: [],
     reflectionNote: '', refreshDay: false,
@@ -489,15 +490,19 @@ function baseLine(){ return 0.55 + 0.02*(state.level-1); }
 function capLine(avg14){ const b = baseLine(); return avg14===null ? b : Math.min(0.85, Math.max(0.55, avg14+0.08)); }
 function bLineComputedToday(){ return Math.min(baseLine(), capLine(avgRate14())); }
 
+function aMinusLineOf(bLine){ return (bLine + 1) / 2; }
 function computeRank(){
   const t = totalMin(), d = doneMin();
   if(t===0) return 'ー';
   const bLine = state.bLineLocked!=null ? state.bLineLocked : bLineComputedToday();
+  const aMinusLine = aMinusLineOf(bLine);
   if(d>=t) return 'A';
+  if(d>=t*aMinusLine) return 'A-';
   if(d>=t*bLine) return 'B';
   if(d>=t*bLine*0.65) return 'C';
   return 'D';
 }
+function rankBadgeClass(rank){ return rank==='ー' ? 'dash' : rank==='A-' ? 'Aminus' : rank; }
 function statusOf(t){ if(t.endAt) return '完了'; if(t.pauseAt) return '一時停止中'; if(t.startAt) return '実行中'; return '未着手'; }
 function actualMinOf(t){
   if(t.endAt && t.startAt){
@@ -517,10 +522,15 @@ function addXP(amount, log){
 }
 function checkDailyBonus(log){
   const rank = computeRank();
-  if((rank==='B' || rank==='A') && !state.bonusB){
+  if((rank==='B' || rank==='A-' || rank==='A') && !state.bonusB){
     state.bonusB = true;
     addXP(15, log);
     log && log.push('Bランク達成！ +15 XP');
+  }
+  if((rank==='A-' || rank==='A') && !state.bonusAMinus){
+    state.bonusAMinus = true;
+    addXP(20, log);
+    log && log.push('A-ランク達成！ +20 XP');
   }
   if(rank==='A' && !state.bonusA){
     state.bonusA = true;
@@ -641,7 +651,8 @@ function resetTask(id){
   t.startAt = null; t.endAt = null; t.pausedSec = 0; t.pauseAt = null;
   const rank = computeRank();
   if(rank !== 'A') state.bonusA = false;
-  if(rank !== 'B' && rank !== 'A') state.bonusB = false;
+  if(rank !== 'A-' && rank !== 'A') state.bonusAMinus = false;
+  if(rank !== 'B' && rank !== 'A-' && rank !== 'A') state.bonusB = false;
   save(); render();
   toast(`リセット: ${t.name}`);
 }
@@ -659,13 +670,15 @@ function sortAndCalcLines(){
   const named = sorted.filter(t=>t.name);
   const total = totalMin();
   let bLine = state.bLineLocked!=null ? state.bLineLocked : bLineComputedToday();
+  const aMinusLine = aMinusLineOf(bLine);
   const cLine = bLine*0.65;
-  const bTarget = total*bLine, cTarget = total*cLine;
-  let cumulative=0, markedB=false, markedC=false;
+  const aMinusTarget = total*aMinusLine, bTarget = total*bLine, cTarget = total*cLine;
+  let cumulative=0, markedAMinus=false, markedB=false, markedC=false;
   named.forEach((t,i)=>{
     cumulative += Number(t.estMin)||0;
     let label='';
     if(i===named.length-1){ label='ここまでA'; }
+    else if(!markedAMinus && cumulative>=aMinusTarget){ label='ここまでA-'; markedAMinus=true; markedB=true; markedC=true; }
     else if(!markedB && cumulative>=bTarget){ label='ここまでB'; markedB=true; markedC=true; }
     else if(!markedC && cumulative>=cTarget){ label='ここまでC'; markedC=true; }
     t.lineLabel = label;
@@ -722,6 +735,7 @@ function checkDayRollover(silent){
   state.reflectionNote = '';
   state.refreshDay = false;
   state.bonusB = false;
+  state.bonusAMinus = false;
   state.bonusA = false;
   state.lastDate = today;
   state.bLineLocked = bLineComputedToday();
@@ -1009,7 +1023,7 @@ function render(){
   document.getElementById('xpFill').style.width = clamp(100*state.xp/xpNeeded(state.level),0,100) + '%';
   const rankEl = document.getElementById('statRank');
   rankEl.textContent = rank;
-  rankEl.className = 'rankpill ' + (rank==='ー'?'dash':rank);
+  rankEl.className = 'rankpill ' + rankBadgeClass(rank);
   document.getElementById('statDone').textContent = `${done}/${total}`;
   const bLine = state.bLineLocked!=null ? state.bLineLocked : bLineComputedToday();
   document.getElementById('statLine').textContent = Math.round(bLine*100) + '%';
@@ -1091,7 +1105,7 @@ function renderHistory(){
     const rate = h.totalMin>0 ? Math.round(100*h.doneMin/h.totalMin) : 0;
     return `<tr class="clickable" data-date="${h.date}">
       <td>${fmtDate(h.date)}</td>
-      <td><span class="rankpill ${h.rank==='ー'?'dash':h.rank}" style="font-size:12px">${h.rank}</span></td>
+      <td><span class="rankpill ${rankBadgeClass(h.rank)}" style="font-size:12px">${h.rank}</span></td>
       <td>${h.doneMin}</td><td>${h.totalMin}</td><td>${rate}%</td>
       <td>${h.refreshDay?'✓':''}</td>
     </tr>`;
@@ -1341,7 +1355,7 @@ document.getElementById('taskList').addEventListener('input', e=>{
     save();
     const rank = computeRank(), total = totalMin(), done = doneMin();
     const rankEl = document.getElementById('statRank');
-    rankEl.textContent = rank; rankEl.className = 'rankpill ' + (rank==='ー'?'dash':rank);
+    rankEl.textContent = rank; rankEl.className = 'rankpill ' + rankBadgeClass(rank);
     document.getElementById('statDone').textContent = `${done}/${total}`;
   }
 });
