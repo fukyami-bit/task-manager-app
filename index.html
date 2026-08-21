@@ -795,7 +795,31 @@ let syncPushTimer = null;
 function scheduleSyncPush(){
   if(!state.syncEnabled || !state.syncCode || !FIREBASE_DB_URL) return;
   if(syncPushTimer) clearTimeout(syncPushTimer);
-  syncPushTimer = setTimeout(()=> pushToCloud(false), 1500);
+  syncPushTimer = setTimeout(()=> pushToCloud(false), 800);
+}
+function hasUnsyncedLocalChanges(){
+  return state.lastSyncAt != null && state.updatedAt > state.lastSyncAt;
+}
+async function syncNow(){
+  if(!(state.syncEnabled && state.syncCode)) return;
+  if(hasUnsyncedLocalChanges()){
+    await pushToCloud(false);
+  } else {
+    const result = await pullFromCloud(false);
+    if(result === 'empty' && !state.lastSyncAt){
+      // brand-new sync code with nothing on it yet: publish this device's
+      // current state as the starting point instead of looping forever
+      await pushToCloud(false);
+    }
+  }
+}
+async function syncAndRollover(){
+  await syncNow();
+  checkDayRollover(true);
+  if(state.syncEnabled && state.syncCode && hasUnsyncedLocalChanges()){
+    await pushToCloud(false);
+  }
+  render();
 }
 function randomSyncCode(){
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -825,14 +849,14 @@ async function pushToCloud(manual){
   }
 }
 async function pullFromCloud(manual){
-  if(!FIREBASE_DB_URL){ if(manual) toast('同期先が未設定です。設定が完了するまでお待ちください。'); return; }
-  if(!state.syncCode){ if(manual) toast('同期コードを入力してください。'); return; }
-  if(manual && !confirm('クラウドの内容でこの端末のデータを上書きします。よろしいですか？')) return;
+  if(!FIREBASE_DB_URL){ if(manual) toast('同期先が未設定です。設定が完了するまでお待ちください。'); return 'error'; }
+  if(!state.syncCode){ if(manual) toast('同期コードを入力してください。'); return 'error'; }
+  if(manual && !confirm('クラウドの内容でこの端末のデータを上書きします。よろしいですか？')) return 'cancelled';
   try{
     const res = await fetch(`${FIREBASE_DB_URL}/sync/${encodeURIComponent(state.syncCode)}.json`);
     if(!res.ok) throw new Error('HTTP '+res.status);
     const remote = await res.json();
-    if(!remote){ if(manual) toast('クラウドにまだデータがありません。先にアップロードしてください。'); return; }
+    if(!remote){ if(manual) toast('クラウドにまだデータがありません。先にアップロードしてください。'); return 'empty'; }
     if(manual || (remote.updatedAt||0) > (state.updatedAt||0)){
       const code = state.syncCode, enabled = state.syncEnabled;
       state = Object.assign(defaultState(), remote);
@@ -840,11 +864,12 @@ async function pullFromCloud(manual){
       state.lastSyncAt = Date.now();
       persistLocal(); render();
       if(manual) toast('クラウドからダウンロードしました。');
-    } else if(manual===false){
-      // silent check: nothing newer, no-op
+      return 'applied';
     }
+    return 'not-newer';
   }catch(e){
     if(manual) toast('ダウンロードに失敗しました。通信環境を確認してください。');
+    return 'error';
   }
 }
 
@@ -1505,6 +1530,7 @@ document.getElementById('btnGenCode').addEventListener('click', ()=>{
 document.getElementById('syncCodeInput').addEventListener('change', e=>{
   state.syncCode = e.target.value.trim().toUpperCase();
   save(); renderSettings();
+  syncNow().then(()=>{ render(); });
 });
 document.getElementById('syncEnabled').addEventListener('change', e=>{
   state.syncEnabled = e.target.checked;
@@ -1515,6 +1541,7 @@ document.getElementById('syncEnabled').addEventListener('change', e=>{
     return;
   }
   save(); renderSettings();
+  syncNow().then(()=>{ render(); });
 });
 document.getElementById('btnSyncPush').addEventListener('click', ()=> pushToCloud(true));
 document.getElementById('btnSyncPull').addEventListener('click', ()=> pullFromCloud(true));
@@ -1554,11 +1581,13 @@ document.getElementById('btnResetAll').addEventListener('click', ()=>{
 });
 
 /* ---------- init ---------- */
-checkDayRollover(true);
 render();
-if(state.syncEnabled && state.syncCode) pullFromCloud(false).then(render);
-setInterval(()=>{ checkDayRollover(true); if(state.syncEnabled && state.syncCode) pullFromCloud(false).then(render); }, 60000);
-window.addEventListener('focus', ()=>{ checkDayRollover(true); if(state.syncEnabled && state.syncCode) pullFromCloud(false).then(render); });
+syncAndRollover();
+setInterval(syncAndRollover, 60000);
+window.addEventListener('focus', syncAndRollover);
+document.addEventListener('visibilitychange', ()=>{
+  if(document.hidden && state.syncEnabled && state.syncCode && hasUnsyncedLocalChanges()) pushToCloud(false);
+});
 </script>
 </body>
 </html>
