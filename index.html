@@ -95,7 +95,7 @@ nav.tabs button.active{color:var(--purple);border-bottom-color:var(--purple)}
 .task-top input[type=text]{flex:1 1 160px;min-width:120px}
 .task input,.task select{font-family:inherit;font-size:13px;padding:6px 8px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--card);color:var(--text)}
 .task .estmin{width:64px}
-.task .priority{width:52px}
+.task .tpriority{width:76px}
 .badge{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;white-space:nowrap}
 .badge.todo{background:var(--border);color:var(--text-sub)}
 .badge.progress{background:var(--info-bg);color:var(--info)}
@@ -419,7 +419,7 @@ table tr.clickable:hover{background:var(--purple-bg)}
 const STORAGE_KEY = 'ikeshiro_task_manager_v1';
 const MAX_TASKS = 20;
 const FIREBASE_DB_URL = 'https://task-sync-81e96-default-rtdb.firebaseio.com';
-const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
+const CLAUDE_API_URL = 'http://localhost:8940';
 const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
 const API_KEY_STORAGE = 'ikeshiro_task_manager_apikey';
 const GOOGLE_CLIENT_ID = '529390802447-vhcvsnrj69k7ug0t7ija5noijtrrnmra.apps.googleusercontent.com';
@@ -1059,6 +1059,15 @@ function tagOptions(selected){
   return '<option value="">（タグなし）</option>' + opts.map(t=>`<option value="${escapeHtml(t)}" ${t===selected?'selected':''}>${escapeHtml(t)}</option>`).join('');
 }
 
+function priorityOptions(selected){
+  const count = Math.max(state.todayTasks.length, 1);
+  let html = `<option value="" ${selected==null?'selected':''}>（未設定）</option>`;
+  for(let i=1;i<=count;i++){
+    html += `<option value="${i}" ${selected===i?'selected':''}>${i}</option>`;
+  }
+  return html;
+}
+
 function renderTaskList(){
   const list = document.getElementById('taskList');
   if(state.todayTasks.length===0){
@@ -1080,7 +1089,7 @@ function renderTaskList(){
         <input type="text" class="tname" value="${escapeHtml(t.name)}" placeholder="タスク名" list="bankNames" data-id="${t.id}">
         <select class="ttag" data-id="${t.id}">${tagOptions(t.tag)}</select>
         <input type="number" class="testmin" min="0" step="5" value="${t.estMin}" data-id="${t.id}"> 分
-        <input type="number" class="tpriority" placeholder="順位" value="${t.priority==null?'':t.priority}" data-id="${t.id}">
+        <select class="tpriority" data-id="${t.id}">${priorityOptions(t.priority)}</select>
         <button class="task-x" data-action="remove" data-id="${t.id}" title="削除">✕</button>
       </div>
       <div class="task-meta">
