@@ -371,8 +371,8 @@ table tr.clickable:hover{background:var(--purple-bg)}
   <div class="modal">
     <button class="close" onclick="closeModal('analysisOverlay')">✕</button>
     <h3 id="analysisTitle">分析用プロンプト</h3>
-    <p style="font-size:12px;color:var(--text-sub)">下のテキストをコピーして、Claudeなどのチャットに貼り付けてください。</p>
-    <textarea class="promptbox" id="analysisText" readonly></textarea>
+    <p style="font-size:12px;color:var(--text-sub)">下のテキストは自由に編集できます。そのままコピーしてClaudeなどに貼り付けるか、内容を直してから「AIに分析してもらう」で送信してください。</p>
+    <textarea class="promptbox" id="analysisText"></textarea>
     <div class="row" style="margin-top:10px">
       <button class="btn primary" id="btnCopyPrompt">コピーする</button>
       <button class="btn" id="btnRunAnalysis" style="display:none">AIに分析してもらう</button>
