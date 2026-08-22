@@ -228,7 +228,10 @@ table tr.clickable:hover{background:var(--purple-bg)}
     <div class="card" id="scheduleCard" style="display:none">
       <div class="row-between">
         <h2 style="margin:0">今日のスケジュール案</h2>
-        <button class="btn sm" id="btnClearSchedule">クリア</button>
+        <div class="row" style="gap:5px">
+          <button class="btn sm" id="btnEditSchedule">修正する</button>
+          <button class="btn sm" id="btnClearSchedule">クリア</button>
+        </div>
       </div>
       <div class="promptbox" id="scheduleCardText" style="white-space:pre-wrap"></div>
       <p style="font-size:11px;color:var(--text-sub);margin-top:6px" id="scheduleCardMeta"></p>
@@ -443,7 +446,7 @@ function defaultState(){
     reflectionNote: '', refreshDay: false,
     history: [], taskHistory: [], bank: [],
     updatedAt: 0, syncCode: '', syncEnabled: false, lastSyncAt: null,
-    scheduleText: '', scheduleGeneratedAt: null,
+    scheduleText: '', scheduleGeneratedAt: null, scheduleMessages: [],
     wakeTime: '', dinnerTime: '', bathTime: '', lunchTime: '', morningPrepMin: 50
   };
 }
@@ -1304,9 +1307,11 @@ document.getElementById('btnConnectGoogle').addEventListener('click', connectGoo
 document.getElementById('btnClearSchedule').addEventListener('click', ()=>{
   state.scheduleText = '';
   state.scheduleGeneratedAt = null;
+  state.scheduleMessages = [];
   save();
   renderScheduleCard();
 });
+document.getElementById('btnEditSchedule').addEventListener('click', reopenScheduleChat);
 let currentAnalysisMode = null;
 function openAnalysisModal(title, promptText, mode){
   currentAnalysisMode = mode || null;
@@ -1326,6 +1331,23 @@ function openAnalysisModal(title, promptText, mode){
     runBtn.style.display = 'none';
     hint.textContent = '設定タブでAPIキーを登録すると、ここで直接AIの回答を見られ、続けて相談もできます。';
   }
+  openModal('analysisOverlay');
+}
+function reopenScheduleChat(){
+  if(!state.scheduleMessages || state.scheduleMessages.length===0){
+    toast('会話の履歴がありません。');
+    return;
+  }
+  currentAnalysisMode = 'schedule';
+  analysisMessages = state.scheduleMessages.slice();
+  document.getElementById('analysisTitle').textContent = '今日のスケジュール案';
+  document.getElementById('analysisText').value = analysisMessages[0] ? analysisMessages[0].content : buildSchedulePrompt();
+  document.getElementById('analysisResultWrap').style.display = '';
+  renderChat();
+  const runBtn = document.getElementById('btnRunAnalysis');
+  const hint = document.getElementById('analysisApiHint');
+  runBtn.style.display = 'none';
+  hint.textContent = apiKey ? '' : '設定タブでAPIキーを登録すると、続けて相談できます。';
   openModal('analysisOverlay');
 }
 document.getElementById('btnAnalyzeToday').addEventListener('click', ()=> openAnalysisModal('今日の分析用プロンプト', buildAnalysisPrompt('today')));
@@ -1356,6 +1378,7 @@ async function sendAnalysisTurn(userText, btn){
     if(currentAnalysisMode === 'schedule'){
       state.scheduleText = reply;
       state.scheduleGeneratedAt = Date.now();
+      state.scheduleMessages = analysisMessages.slice();
       save();
       renderScheduleCard();
     }
