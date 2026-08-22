@@ -211,9 +211,18 @@ table tr.clickable:hover{background:var(--purple-bg)}
       <p style="font-size:12.5px;color:var(--text-sub);margin-top:0" id="googleCalHint">連携すると、今日の予定を取り込んで、タスクと合わせたスケジュール作成にAIを使えます。この端末・このブラウザだけで完結し、予定はどこにも保存されません。</p>
       <div class="row">
         <button class="btn" id="btnConnectGoogle">Googleカレンダーと連携</button>
-        <button class="btn" id="btnMakeSchedule" style="display:none">予定とタスクからスケジュールを組む</button>
       </div>
       <div id="googleEventsList" style="margin-top:10px"></div>
+      <div class="row" style="margin-top:10px;gap:14px">
+        <div class="fg" style="margin-bottom:0"><label>起床時間</label><input type="time" id="wakeTimeInput" style="width:120px"></div>
+        <div class="fg" style="margin-bottom:0"><label>朝の準備(分)</label><input type="number" id="morningPrepInput" min="0" step="5" style="width:80px"></div>
+        <div class="fg" style="margin-bottom:0"><label>昼食の時間</label><input type="time" id="lunchTimeInput" style="width:120px"></div>
+        <div class="fg" style="margin-bottom:0"><label>夕食の時間</label><input type="time" id="dinnerTimeInput" style="width:120px"></div>
+        <div class="fg" style="margin-bottom:0"><label>お風呂の時間</label><input type="time" id="bathTimeInput" style="width:120px"></div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="btnMakeSchedule" style="display:none">予定とタスクからスケジュールを組む</button>
+      </div>
     </div>
 
     <div class="card" id="scheduleCard" style="display:none">
@@ -434,7 +443,8 @@ function defaultState(){
     reflectionNote: '', refreshDay: false,
     history: [], taskHistory: [], bank: [],
     updatedAt: 0, syncCode: '', syncEnabled: false, lastSyncAt: null,
-    scheduleText: '', scheduleGeneratedAt: null
+    scheduleText: '', scheduleGeneratedAt: null,
+    wakeTime: '', dinnerTime: '', bathTime: '', lunchTime: '', morningPrepMin: 50
   };
 }
 
@@ -996,11 +1006,27 @@ function renderCalendarEvents(){
   ).join('');
 }
 
+function addMinutesToTime(hhmm, minutes){
+  if(!hhmm) return '';
+  const [h,m] = hhmm.split(':').map(Number);
+  const total = h*60 + m + minutes;
+  const hh = Math.floor(((total%1440)+1440)%1440/60);
+  const mm = ((total%60)+60)%60;
+  return String(hh).padStart(2,'0') + ':' + String(mm).padStart(2,'0');
+}
 function buildSchedulePrompt(){
   const now = new Date();
-  let prompt = 'あなたは優秀なスケジューリングアシスタントです。以下の「今日の予定」と「今日のタスク一覧」をもとに、現実的な1日のスケジュール表を作ってください。既存の予定は動かさず、タスクをその合間に無理のない形で配置してください。表形式（時刻 | 内容）でお願いします。\n\n';
+  let prompt = 'あなたは優秀なスケジューリングアシスタントです。以下は今日の状況です。いきなりスケジュール表を作るのではなく、まず状況を踏まえて私に確認や相談をしてください。特に、カレンダーの予定には前後に移動時間がかかる場合があるので、その行き帰りの時間でできそうな（あるいはやっておきたい）タスクがあるか、私に質問してください。そのやり取りを踏まえてから、一緒にスケジュールを組み立てていきましょう。\n\n';
   prompt += `現在時刻: ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}\n\n`;
-  prompt += '今日の予定（カレンダー）:\n';
+  prompt += '固定の前提（動かせません）:\n';
+  prompt += `- 起床時間: ${state.wakeTime || '（未設定）'}\n`;
+  if(state.wakeTime){
+    prompt += `- 起床後は朝食・身支度に${state.morningPrepMin || 0}分かかるため、実際に動き出せるのは ${addMinutesToTime(state.wakeTime, state.morningPrepMin || 0)} からです\n`;
+  }
+  prompt += `- 昼食の時間: ${state.lunchTime || '（未設定）'}\n`;
+  prompt += `- 夕食の時間: ${state.dinnerTime || '（未設定）'}\n`;
+  prompt += `- お風呂の時間: ${state.bathTime || '（未設定）'}\n`;
+  prompt += '\n今日の予定（カレンダー）:\n';
   if(todayCalendarEvents.length === 0){
     prompt += '(予定なし)\n';
   } else {
@@ -1060,6 +1086,11 @@ function render(){
   renderTaskList();
   document.getElementById('reflectionNote').value = state.reflectionNote || '';
   document.getElementById('refreshDay').checked = !!state.refreshDay;
+  document.getElementById('wakeTimeInput').value = state.wakeTime || '';
+  document.getElementById('morningPrepInput').value = state.morningPrepMin!=null ? state.morningPrepMin : 50;
+  document.getElementById('lunchTimeInput').value = state.lunchTime || '';
+  document.getElementById('dinnerTimeInput').value = state.dinnerTime || '';
+  document.getElementById('bathTimeInput').value = state.bathTime || '';
   renderScheduleCard();
 
   renderHistory();
@@ -1367,6 +1398,11 @@ document.getElementById('btnForceRollover').addEventListener('click', ()=> check
 
 document.getElementById('reflectionNote').addEventListener('input', e=>{ state.reflectionNote = e.target.value; save(); });
 document.getElementById('refreshDay').addEventListener('change', e=>{ state.refreshDay = e.target.checked; save(); });
+document.getElementById('wakeTimeInput').addEventListener('change', e=>{ state.wakeTime = e.target.value; save(); });
+document.getElementById('morningPrepInput').addEventListener('change', e=>{ state.morningPrepMin = Number(e.target.value)||0; save(); });
+document.getElementById('lunchTimeInput').addEventListener('change', e=>{ state.lunchTime = e.target.value; save(); });
+document.getElementById('dinnerTimeInput').addEventListener('change', e=>{ state.dinnerTime = e.target.value; save(); });
+document.getElementById('bathTimeInput').addEventListener('change', e=>{ state.bathTime = e.target.value; save(); });
 
 document.getElementById('taskList').addEventListener('click', e=>{
   const b = e.target.closest('button[data-action]');
