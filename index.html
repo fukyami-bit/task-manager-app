@@ -1861,15 +1861,36 @@ function extractJsonArray(text){
   let cleaned = String(text||'').trim();
   const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if(fenceMatch) cleaned = fenceMatch[1].trim();
-  const arrStart = cleaned.indexOf('[');
-  const arrEnd = cleaned.lastIndexOf(']');
-  if(arrStart===-1 || arrEnd===-1 || arrEnd<=arrStart) return null;
-  cleaned = cleaned.slice(arrStart, arrEnd+1);
-  try{
-    const parsed = JSON.parse(cleaned);
-    return Array.isArray(parsed) ? parsed : null;
-  }catch(e){
-    return null;
+  // Try each '[' in turn (not just the first) and, for each, walk forward
+  // tracking bracket depth (ignoring brackets inside strings) to find its
+  // TRUE matching close - rather than naively pairing the first '[' with the
+  // last ']' in the text, which breaks if the AI adds a stray leading aside
+  // like "[了解]" or a trailing note after the real array despite being
+  // asked not to.
+  let searchFrom = 0;
+  while(true){
+    const start = cleaned.indexOf('[', searchFrom);
+    if(start===-1) return null;
+    let depth = 0, end = -1, inStr = false, escape = false;
+    for(let i=start; i<cleaned.length; i++){
+      const ch = cleaned[i];
+      if(inStr){
+        if(escape) escape = false;
+        else if(ch==='\\') escape = true;
+        else if(ch==='"') inStr = false;
+        continue;
+      }
+      if(ch==='"'){ inStr = true; continue; }
+      if(ch==='['){ depth++; }
+      else if(ch===']'){ depth--; if(depth===0){ end = i; break; } }
+    }
+    if(end===-1) return null;
+    const slice = cleaned.slice(start, end+1);
+    try{
+      const parsed = JSON.parse(slice);
+      if(Array.isArray(parsed)) return parsed;
+    }catch(e){ /* not valid JSON here - try the next '[' */ }
+    searchFrom = start + 1;
   }
 }
 function parseBulkAddResponse(text){
