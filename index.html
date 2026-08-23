@@ -89,13 +89,17 @@ nav.tabs button.active{color:var(--purple);border-bottom-color:var(--purple)}
 .btn.sm{padding:4px 9px;font-size:11.5px}
 
 .tasklist{display:flex;flex-direction:column;gap:8px}
-.task{border:1px solid var(--border);border-radius:var(--radius);padding:10px;background:var(--bg)}
+.task{border:1px solid var(--border);border-radius:var(--radius);padding:10px;background:var(--bg);display:flex;gap:8px;align-items:flex-start}
 .task.done{opacity:.72}
+.task.dragging{box-shadow:var(--shadow);opacity:.85;position:relative;z-index:5}
+.task-body{flex:1;min-width:0}
+.drag-handle{flex-shrink:0;width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:var(--text-sub);cursor:grab;touch-action:none;font-size:16px;user-select:none;border-radius:var(--radius-sm);margin-top:2px}
+.drag-handle:hover{background:var(--purple-bg)}
+.drag-handle:active{cursor:grabbing}
 .task-top{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap}
 .task-top input[type=text]{flex:1 1 160px;min-width:120px}
 .task input,.task select{font-family:inherit;font-size:13px;padding:6px 8px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--card);color:var(--text)}
 .task .estmin{width:64px}
-.task .tpriority{width:76px}
 .badge{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;white-space:nowrap}
 .badge.todo{background:var(--border);color:var(--text-sub)}
 .badge.progress{background:var(--info-bg);color:var(--info)}
@@ -191,9 +195,9 @@ table tr.clickable:hover{background:var(--purple-bg)}
         <div class="row">
           <button class="btn sm" id="btnAddFromBank">＋ バンクから追加</button>
           <button class="btn sm" id="btnAddBlank">＋ タスク追加</button>
-          <button class="btn sm" id="btnSortLines">優先順位で並び替え</button>
         </div>
       </div>
+      <p style="font-size:11.5px;color:var(--text-sub);margin:0 0 8px">左のハンドル(⠿)をドラッグすると優先順位を変えられます。完了したタスクは自動で上に表示されます。</p>
       <div class="tasklist" id="taskList"></div>
     </div>
 
@@ -575,7 +579,7 @@ function addTask(partial){
   if(state.todayTasks.length>=MAX_TASKS){ toast(`タスクは最大${MAX_TASKS}件までです。`); return; }
   state.todayTasks.push(Object.assign({
     id: uid(), name:'', tag:'', estMin:30, startAt:null, endAt:null,
-    pausedSec:0, pauseAt:null, priority:null, lineLabel:''
+    pausedSec:0, pauseAt:null
   }, partial||{}));
   save(); render();
 }
@@ -673,34 +677,26 @@ function resetTask(id){
   toast(`リセット: ${t.name}`);
 }
 
-function sortAndCalcLines(){
-  const tasks = state.todayTasks.filter(t=>t.name);
-  if(tasks.length===0){ toast('タスクが登録されていません。'); return; }
-  const withKey = state.todayTasks.map((t,i)=>({t, key: (t.priority===null||t.priority===undefined||t.priority==='') ? 9999+i : Number(t.priority)}));
-  withKey.sort((a,b)=>a.key-b.key);
-  const sorted = withKey.map(x=>x.t);
-  let n = 0;
-  sorted.forEach(t=>{ if(t.name){ n++; t.priority = n; } else { t.priority = null; } t.lineLabel=''; });
-  state.todayTasks = sorted;
-
-  const named = sorted.filter(t=>t.name);
+function computeLiveLines(){
   const total = totalMin();
   let bLine = state.bLineLocked!=null ? state.bLineLocked : bLineComputedToday();
   const aMinusLine = aMinusLineOf(bLine);
   const cLine = bLine*0.65;
   const aMinusTarget = total*aMinusLine, bTarget = total*bLine, cTarget = total*cLine;
-  let cumulative=0, markedAMinus=false, markedB=false, markedC=false;
-  named.forEach((t,i)=>{
+  const remaining = state.todayTasks.filter(t=>t.name && !t.endAt);
+  const labels = {};
+  let cumulative = doneMin();
+  let markedAMinus=false, markedB=false, markedC=false;
+  remaining.forEach((t,i)=>{
     cumulative += Number(t.estMin)||0;
     let label='';
-    if(i===named.length-1){ label='ここまでA'; }
+    if(i===remaining.length-1){ label='ここまでA'; }
     else if(!markedAMinus && cumulative>=aMinusTarget){ label='ここまでA-'; markedAMinus=true; markedB=true; markedC=true; }
     else if(!markedB && cumulative>=bTarget){ label='ここまでB'; markedB=true; markedC=true; }
     else if(!markedC && cumulative>=cTarget){ label='ここまでC'; markedC=true; }
-    t.lineLabel = label;
+    labels[t.id] = label;
   });
-  save(); render();
-  toast('優先順位で並び替え、ラインを計算しました。');
+  return labels;
 }
 
 /* ---------- day rollover ---------- */
@@ -1118,22 +1114,17 @@ function tagOptions(selected){
   return '<option value="">（タグなし）</option>' + opts.map(t=>`<option value="${escapeHtml(t)}" ${t===selected?'selected':''}>${escapeHtml(t)}</option>`).join('');
 }
 
-function priorityOptions(selected){
-  const count = Math.max(state.todayTasks.length, 1);
-  let html = `<option value="" ${selected==null?'selected':''}>（未設定）</option>`;
-  for(let i=1;i<=count;i++){
-    html += `<option value="${i}" ${selected===i?'selected':''}>${i}</option>`;
-  }
-  return html;
-}
-
 function renderTaskList(){
   const list = document.getElementById('taskList');
   if(state.todayTasks.length===0){
     list.innerHTML = '<div class="empty">タスクがありません。「＋ タスク追加」または「＋ バンクから追加」で登録しましょう。</div>';
     return;
   }
-  list.innerHTML = state.todayTasks.map(t=>{
+  const lineLabels = computeLiveLines();
+  const completed = state.todayTasks.filter(t=>t.endAt);
+  const incomplete = state.todayTasks.filter(t=>!t.endAt);
+  const displayOrder = completed.concat(incomplete);
+  list.innerHTML = displayOrder.map(t=>{
     const status = statusOf(t);
     const badgeClass = status==='完了'?'done':status==='一時停止中'?'paused':status==='実行中'?'progress':'todo';
     const am = actualMinOf(t);
@@ -1143,19 +1134,21 @@ function renderTaskList(){
     const canFinish = t.startAt && !t.endAt && !t.pauseAt;
     const canQuick = !t.endAt;
     const canReset = t.startAt || t.endAt;
+    const lineLabel = lineLabels[t.id] || '';
     return `<div class="task ${t.endAt?'done':''}" data-id="${t.id}">
+      ${t.endAt ? '' : `<span class="drag-handle" data-id="${t.id}" title="ドラッグして優先順位を変更">⠿</span>`}
+      <div class="task-body">
       <div class="task-top">
         <input type="text" class="tname" value="${escapeHtml(t.name)}" placeholder="タスク名" list="bankNames" data-id="${t.id}">
         <select class="ttag" data-id="${t.id}">${tagOptions(t.tag)}</select>
         <input type="number" class="testmin" min="0" step="5" value="${t.estMin}" data-id="${t.id}"> 分
-        <select class="tpriority" data-id="${t.id}">${priorityOptions(t.priority)}</select>
         <button class="task-x" data-action="remove" data-id="${t.id}" title="削除">✕</button>
       </div>
       <div class="task-meta">
         <span class="badge ${badgeClass}">${status}</span>
         ${t.startAt && !t.endAt ? `<span>開始: ${fmtClock(t.startAt)}</span><span>終了目安: ${fmtClock(t.startAt + (Number(t.estMin)||0)*60000 + (t.pausedSec||0)*1000 + (t.pauseAt ? (Date.now()-t.pauseAt) : 0))}</span>` : ''}
         ${am!==null?`<span>実績: ${am}分</span>`:''}
-        ${t.lineLabel?`<span class="badge line">${t.lineLabel}</span>`:''}
+        ${lineLabel?`<span class="badge line">${lineLabel}</span>`:''}
       </div>
       <div class="task-actions">
         <button class="btn sm" data-action="start" data-id="${t.id}" ${canStart?'':'disabled'}>開始</button>
@@ -1164,6 +1157,7 @@ function renderTaskList(){
         <button class="btn sm primary" data-action="finish" data-id="${t.id}" ${canFinish?'':'disabled'}>完了</button>
         <button class="btn sm" data-action="quick" data-id="${t.id}" ${canQuick?'':'disabled'}>計画通り完了</button>
         <button class="btn sm" data-action="reset" data-id="${t.id}" ${canReset?'':'disabled'}>リセット</button>
+      </div>
       </div>
     </div>`;
   }).join('') + `<datalist id="bankNames">${state.bank.map(b=>`<option value="${escapeHtml(b.name)}">`).join('')}</datalist>`;
@@ -1298,7 +1292,6 @@ document.querySelectorAll('nav.tabs button').forEach(btn=>{
 });
 
 document.getElementById('btnAddBlank').addEventListener('click', ()=> addTask({}));
-document.getElementById('btnSortLines').addEventListener('click', sortAndCalcLines);
 document.getElementById('btnAddFromBank').addEventListener('click', ()=>{
   document.querySelector('button[data-tab="bank"]').click();
   toast('バンクの「今日に追加」ボタンからタスクを追加できます。');
@@ -1451,8 +1444,6 @@ document.getElementById('taskList').addEventListener('change', e=>{
     save(); render();
   } else if(e.target.classList.contains('ttag')){
     t.tag = e.target.value; save();
-  } else if(e.target.classList.contains('tpriority')){
-    t.priority = e.target.value===''? null : Number(e.target.value); save();
   }
 });
 document.getElementById('taskList').addEventListener('input', e=>{
@@ -1468,6 +1459,71 @@ document.getElementById('taskList').addEventListener('input', e=>{
     document.getElementById('statDone').textContent = `${done}/${total}`;
   }
 });
+
+/* ---------- drag to reorder priority ---------- */
+let dragInfo = null;
+document.getElementById('taskList').addEventListener('pointerdown', e=>{
+  const handle = e.target.closest('.drag-handle');
+  if(!handle) return;
+  const taskEl = handle.closest('.task');
+  const listEl = document.getElementById('taskList');
+  dragInfo = {
+    id: handle.dataset.id,
+    taskEl,
+    listEl,
+    startY: e.clientY,
+    pointerId: e.pointerId
+  };
+  taskEl.classList.add('dragging');
+  handle.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+document.getElementById('taskList').addEventListener('pointermove', e=>{
+  if(!dragInfo || e.pointerId !== dragInfo.pointerId) return;
+  const { taskEl } = dragInfo;
+  const deltaY = e.clientY - dragInfo.startY;
+  taskEl.style.transform = `translateY(${deltaY}px)`;
+  const draggedRect = taskEl.getBoundingClientRect();
+  const draggedMid = draggedRect.top + draggedRect.height / 2;
+  if(deltaY < 0){
+    const prev = taskEl.previousElementSibling;
+    if(prev && !prev.classList.contains('done')){
+      const prevRect = prev.getBoundingClientRect();
+      const prevMid = prevRect.top + prevRect.height / 2;
+      if(draggedMid < prevMid){
+        taskEl.parentNode.insertBefore(taskEl, prev);
+        dragInfo.startY = e.clientY;
+        taskEl.style.transform = '';
+      }
+    }
+  } else if(deltaY > 0){
+    const next = taskEl.nextElementSibling;
+    if(next && next.classList.contains('task')){
+      const nextRect = next.getBoundingClientRect();
+      const nextMid = nextRect.top + nextRect.height / 2;
+      if(draggedMid > nextMid){
+        taskEl.parentNode.insertBefore(next, taskEl);
+        dragInfo.startY = e.clientY;
+        taskEl.style.transform = '';
+      }
+    }
+  }
+});
+function endDrag(e){
+  if(!dragInfo || (e && e.pointerId !== dragInfo.pointerId)) return;
+  const { taskEl, listEl } = dragInfo;
+  taskEl.style.transform = '';
+  taskEl.classList.remove('dragging');
+  const newIncompleteOrder = Array.from(listEl.querySelectorAll('.task:not(.done)')).map(el => el.dataset.id);
+  const completedIds = state.todayTasks.filter(t => t.endAt).map(t => t.id);
+  const byId = {};
+  state.todayTasks.forEach(t => { byId[t.id] = t; });
+  state.todayTasks = completedIds.concat(newIncompleteOrder).map(id => byId[id]).filter(Boolean);
+  dragInfo = null;
+  save(); render();
+}
+document.getElementById('taskList').addEventListener('pointerup', endDrag);
+document.getElementById('taskList').addEventListener('pointercancel', endDrag);
 
 document.getElementById('historyBody').addEventListener('click', e=>{
   const tr = e.target.closest('tr[data-date]');
