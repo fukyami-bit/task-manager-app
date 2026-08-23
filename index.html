@@ -1083,6 +1083,35 @@ async function fetchTodayEvents(){
   }
 }
 
+async function fetchCalendarEventsRange(daysAhead){
+  if(!googleAccessToken) return null;
+  const now = new Date();
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+  const endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate()+daysAhead).toISOString();
+  const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?` +
+    `timeMin=${encodeURIComponent(startOfDay)}&timeMax=${encodeURIComponent(endDate)}&singleEvents=true&orderBy=startTime&maxResults=250`;
+  try{
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${googleAccessToken}` } });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    return (data.items || []).map(ev => ({
+      title: ev.summary || '(タイトルなし)',
+      start: ev.start && (ev.start.dateTime || ev.start.date),
+      end: ev.end && (ev.end.dateTime || ev.end.date),
+      allDay: !(ev.start && ev.start.dateTime)
+    }));
+  }catch(e){
+    return null;
+  }
+}
+function formatEventsForPrompt(events){
+  if(!events.length) return '(この期間に登録されている予定はありません)\n';
+  return events.map(ev=>{
+    const dateLabel = ev.allDay ? ev.start : (()=>{ const d=new Date(ev.start); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })();
+    const timeLabel = ev.allDay ? '終日' : `${fmtEventTime(ev.start, false)}〜${fmtEventTime(ev.end, false)}`;
+    return `- ${dateLabel} ${timeLabel} ${ev.title}`;
+  }).join('\n') + '\n';
+}
 function fmtEventTime(iso, allDay){
   if(!iso) return '';
   if(allDay) return '終日';
@@ -1313,15 +1342,20 @@ function renderPlanPreview(){
   `).join('');
   document.getElementById('planPreviewWrap').style.display = planPreviewProposed.length ? '' : 'none';
 }
-function buildPlanCreatePrompt(name, goal){
+function buildPlanCreatePrompt(name, goal, calendarEvents){
   let prompt = 'あなたは学習計画のプランナーです。以下の内容をもとに、日付ごとの学習計画を一緒に考えてください。いきなり計画表を作らず、参考書の分量・1日に使える時間・休みたい曜日など、計画を立てるのに必要な情報が足りなければ先に質問してください。\n\n';
   prompt += `今日の日付: ${todayStr()}\n\n`;
   prompt += `計画の名前: ${name}\n\n`;
   prompt += `やりたいこと:\n${goal}\n\n`;
+  if(calendarEvents){
+    prompt += 'カレンダー連携済み。今日から数か月先までの既存の予定は以下の通りです。これらの日時とはできるだけ重ならないように計画を組んでください:\n';
+    prompt += formatEventsForPrompt(calendarEvents);
+    prompt += '\n';
+  }
   prompt += '十分な情報が揃ったら、計画をJSON配列の形式（[{"date":"YYYY-MM-DD","title":"..."}]）だけで出力してください。その回は前置きや説明を書かず、JSON配列だけを返してください。';
   return prompt;
 }
-function buildPlanReschedulePrompt(plan){
+function buildPlanReschedulePrompt(plan, calendarEvents){
   const today = todayStr();
   const sorted = allPlanItemsSorted(plan);
   const remaining = sorted.filter(i=>!i.done && i.date>=today);
@@ -1333,6 +1367,10 @@ function buildPlanReschedulePrompt(plan){
   if(recentDone.length){
     prompt += '\n\n（参考：直近に完了した項目）\n';
     prompt += recentDone.map(i=>`- ${i.date}: ${i.title} [完了]`).join('\n');
+  }
+  if(calendarEvents){
+    prompt += '\n\nカレンダー連携済み。今日以降の既存の予定は以下の通りです。これらの日時とはできるだけ重ならないように再調整してください:\n';
+    prompt += formatEventsForPrompt(calendarEvents);
   }
   return prompt;
 }
@@ -1983,7 +2021,7 @@ document.getElementById('btnNewPlan').addEventListener('click', ()=>{
   document.getElementById('btnPlanStart').disabled = !apiKey;
   openModal('planCreateOverlay');
 });
-document.getElementById('btnPlanStart').addEventListener('click', ()=>{
+document.getElementById('btnPlanStart').addEventListener('click', async ()=>{
   const name = document.getElementById('planNameInput').value.trim();
   const goal = document.getElementById('planGoalInput').value.trim();
   if(!name){ toast('計画の名前を入力してください。'); return; }
@@ -1991,7 +2029,8 @@ document.getElementById('btnPlanStart').addEventListener('click', ()=>{
   if(!apiKey){ toast('設定タブでAPIキーを登録してください。'); return; }
   currentPlanContext = { mode:'create', name, planId:null };
   closeModal('planCreateOverlay');
-  openAnalysisModal(`新しい計画:${name}`, buildPlanCreatePrompt(name, goal), 'plan');
+  const events = await fetchCalendarEventsRange(90);
+  openAnalysisModal(`新しい計画:${name}`, buildPlanCreatePrompt(name, goal, events), 'plan');
 });
 document.getElementById('planList').addEventListener('click', e=>{
   const btn = e.target.closest('button[data-action="openplan"]');
@@ -2033,13 +2072,22 @@ document.getElementById('btnPlanDelete').addEventListener('click', ()=>{
   save(); render();
   closeModal('planDetailOverlay');
 });
-document.getElementById('btnPlanReschedule').addEventListener('click', ()=>{
+document.getElementById('btnPlanReschedule').addEventListener('click', async ()=>{
   const plan = state.studyPlans.find(p=>p.id===currentOpenPlanId);
   if(!plan) return;
   if(!apiKey){ toast('設定タブでAPIキーを登録してください。'); return; }
   currentPlanContext = { mode:'reschedule', name: plan.name, planId: plan.id };
   closeModal('planDetailOverlay');
-  openAnalysisModal(`リスケジュール:${plan.name}`, buildPlanReschedulePrompt(plan), 'plan');
+  const today = todayStr();
+  const remaining = allPlanItemsSorted(plan).filter(i=>!i.done && i.date>=today);
+  let daysAhead = 90;
+  if(remaining.length){
+    const lastDate = remaining[remaining.length-1].date;
+    const diffDays = Math.ceil((new Date(lastDate) - new Date(today)) / 86400000) + 14;
+    daysAhead = Math.max(14, Math.min(365, diffDays));
+  }
+  const events = await fetchCalendarEventsRange(daysAhead);
+  openAnalysisModal(`リスケジュール:${plan.name}`, buildPlanReschedulePrompt(plan, events), 'plan');
 });
 document.getElementById('planPreviewList').addEventListener('input', e=>{
   const idx = Number(e.target.dataset.idx);
