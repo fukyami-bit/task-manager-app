@@ -128,6 +128,11 @@ table tr.clickable:hover{background:var(--purple-bg)}
 .bankitem{border:1px solid var(--border);border-radius:var(--radius);padding:10px;margin-bottom:8px;background:var(--bg)}
 .bankitem .name{font-weight:700;font-size:13.5px}
 .bankitem .detail{font-size:11.5px;color:var(--text-sub);margin-top:3px}
+.bulk-row{display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:1px solid var(--border)}
+.bulk-row:last-child{border-bottom:none}
+.bulk-row input[type=text]{flex:1 1 140px;min-width:100px;font-family:inherit;font-size:12.5px;padding:5px 7px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--card);color:var(--text)}
+.bulk-row input[type=number]{width:56px;font-family:inherit;font-size:12.5px;padding:5px 7px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--card);color:var(--text)}
+.bulk-row select{font-family:inherit;font-size:12.5px;padding:5px 7px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--card);color:var(--text);max-width:110px}
 .taglist{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .tagchip{background:var(--purple-bg);color:var(--purple);border-radius:20px;padding:3px 10px;font-size:12px;display:flex;align-items:center;gap:6px}
 .tagchip button{background:none;border:none;color:var(--purple);cursor:pointer;font-size:12px;padding:0;line-height:1}
@@ -284,7 +289,10 @@ table tr.clickable:hover{background:var(--purple-bg)}
     <div class="card">
       <div class="row-between">
         <h2 style="margin:0">タスクバンク（よく使うタスクの候補）</h2>
-        <button class="btn sm primary" id="btnBankAdd">＋ 追加</button>
+        <div class="row" style="gap:6px">
+          <button class="btn sm" id="btnBulkAdd">一括登録（AIで整理）</button>
+          <button class="btn sm primary" id="btnBankAdd">＋ 追加</button>
+        </div>
       </div>
       <p style="font-size:12px;color:var(--text-sub);margin-top:0">「今日」でタスク名を入力すると、ここに登録した予定分数・タグが自動入力されます。「繰り返し」をオフにすると、完了と同時にバンクから削除されます。</p>
       <div id="bankList"></div>
@@ -409,6 +417,28 @@ table tr.clickable:hover{background:var(--purple-bg)}
     <div class="row" style="margin-top:14px">
       <button class="btn primary" id="btnBankSave">保存</button>
       <button class="btn danger" id="btnBankDelete" style="display:none">削除</button>
+    </div>
+  </div>
+</div>
+
+<!-- Bulk add modal -->
+<div class="overlay" id="bulkAddOverlay">
+  <div class="modal">
+    <button class="close" onclick="closeModal('bulkAddOverlay')">✕</button>
+    <h3>一括登録（AIで整理）</h3>
+    <p style="font-size:12px;color:var(--text-sub)">箇条書き・見出し・番号付きなど、どんな形式でも構いません。タスクの一覧をそのまま貼り付けてください。AIが「実際に行う作業」だけを抜き出して、タスク名・タグ・目安時間を提案します（ご自身のAPIキーを使うので、設定タブでの登録が必要です）。</p>
+    <textarea class="promptbox" id="bulkAddInput" style="min-height:160px" placeholder="ここにタスク一覧を貼り付け"></textarea>
+    <div class="row" style="margin-top:10px">
+      <button class="btn primary" id="btnBulkAddParse">AIで整理する</button>
+    </div>
+    <p style="font-size:11px;color:var(--text-sub);margin-top:6px" id="bulkAddHint"></p>
+    <div id="bulkAddPreviewWrap" style="display:none;margin-top:14px">
+      <label style="display:block;font-size:11.5px;color:var(--text-sub);margin-bottom:6px;font-weight:600">追加する項目を確認・編集してください</label>
+      <div id="bulkAddPreviewList"></div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" id="btnBulkAddCommit">選択した項目をバンクに追加</button>
+        <button class="btn" id="btnBulkAddCancel">キャンセル</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1598,6 +1628,96 @@ document.getElementById('btnBankDelete').addEventListener('click', ()=>{
   state.bank = state.bank.filter(x=>x.id!==editingBankId);
   save(); render(); closeModal('bankModalOverlay');
 });
+
+/* bulk add via AI */
+let bulkAddProposed = [];
+function buildBulkAddPrompt(rawText){
+  let prompt = 'あなたはタスク整理の専門家です。以下のテキストから、実際に手を動かして行う「タスク」だけを抜き出してください。見出しや説明文、「現状維持」「◯◯なし」のような実行不要な項目は除いてください。\n\n';
+  prompt += `既存のタグ候補（できるだけこの中から選んでください。当てはまらなければ短い新しいタグを付けてかまいません）: ${state.tags.join('、')}\n\n`;
+  prompt += 'それぞれのタスクについて、タスク名(name)・タグ(tag)・目安時間を分単位(estMin、5刻みの数値、不明なら30)を推定し、以下のJSON配列の形式だけで出力してください。前置きや説明、コードブロックの記号は一切つけず、JSON配列そのものだけを返してください。\n\n';
+  prompt += '[{"name":"タスク名","tag":"タグ","estMin":30}, ...]\n\n';
+  prompt += '対象のテキスト:\n' + rawText;
+  return prompt;
+}
+function parseBulkAddResponse(text){
+  let cleaned = text.trim();
+  const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if(fenceMatch) cleaned = fenceMatch[1].trim();
+  const arrStart = cleaned.indexOf('[');
+  const arrEnd = cleaned.lastIndexOf(']');
+  if(arrStart!==-1 && arrEnd!==-1) cleaned = cleaned.slice(arrStart, arrEnd+1);
+  const parsed = JSON.parse(cleaned);
+  if(!Array.isArray(parsed)) throw new Error('配列ではありません');
+  return parsed.map(item=>({
+    name: String(item.name||'').trim(),
+    tag: String(item.tag||'').trim(),
+    estMin: Math.max(0, Number(item.estMin)||30)
+  })).filter(item=>item.name);
+}
+function renderBulkAddPreview(){
+  const wrap = document.getElementById('bulkAddPreviewList');
+  wrap.innerHTML = bulkAddProposed.map((item,i)=>`
+    <div class="bulk-row" data-idx="${i}">
+      <input type="checkbox" class="bulk-check" data-idx="${i}" ${item.include!==false?'checked':''}>
+      <input type="text" class="bulk-name" data-idx="${i}" value="${escapeHtml(item.name)}">
+      <select class="bulk-tag" data-idx="${i}">${tagOptions(item.tag)}</select>
+      <input type="number" class="bulk-est" data-idx="${i}" min="0" step="5" value="${item.estMin}">分
+    </div>
+  `).join('');
+  document.getElementById('bulkAddPreviewWrap').style.display = bulkAddProposed.length ? '' : 'none';
+}
+document.getElementById('btnBulkAdd').addEventListener('click', ()=>{
+  document.getElementById('bulkAddInput').value = '';
+  document.getElementById('bulkAddPreviewWrap').style.display = 'none';
+  bulkAddProposed = [];
+  const hint = document.getElementById('bulkAddHint');
+  hint.textContent = apiKey ? '' : '設定タブでAPIキーを登録すると使えます。';
+  document.getElementById('btnBulkAddParse').disabled = !apiKey;
+  openModal('bulkAddOverlay');
+});
+document.getElementById('btnBulkAddParse').addEventListener('click', async ()=>{
+  const raw = document.getElementById('bulkAddInput').value.trim();
+  if(!raw){ toast('テキストを貼り付けてください。'); return; }
+  if(!apiKey){ toast('設定タブでAPIキーを登録してください。'); return; }
+  const btn = document.getElementById('btnBulkAddParse');
+  btn.disabled = true; btn.textContent = '整理中…';
+  try{
+    const reply = await callClaudeMessages([{ role:'user', content: buildBulkAddPrompt(raw) }]);
+    const items = parseBulkAddResponse(reply);
+    if(items.length===0){ toast('タスクが見つかりませんでした。'); return; }
+    bulkAddProposed = items;
+    renderBulkAddPreview();
+    toast(`${items.length}件のタスクを見つけました。内容を確認してください。`);
+  }catch(e){
+    toast('整理に失敗しました: ' + e.message);
+  }finally{
+    btn.disabled = false; btn.textContent = 'AIで整理する';
+  }
+});
+document.getElementById('bulkAddPreviewList').addEventListener('input', e=>{
+  const idx = Number(e.target.dataset.idx);
+  if(Number.isNaN(idx) || !bulkAddProposed[idx]) return;
+  if(e.target.classList.contains('bulk-name')) bulkAddProposed[idx].name = e.target.value;
+  else if(e.target.classList.contains('bulk-est')) bulkAddProposed[idx].estMin = Number(e.target.value)||0;
+});
+document.getElementById('bulkAddPreviewList').addEventListener('change', e=>{
+  const idx = Number(e.target.dataset.idx);
+  if(Number.isNaN(idx) || !bulkAddProposed[idx]) return;
+  if(e.target.classList.contains('bulk-check')) bulkAddProposed[idx].include = e.target.checked;
+  else if(e.target.classList.contains('bulk-tag')) bulkAddProposed[idx].tag = e.target.value;
+});
+document.getElementById('btnBulkAddCommit').addEventListener('click', ()=>{
+  const toAdd = bulkAddProposed.filter(item=>item.include!==false && item.name);
+  if(toAdd.length===0){ toast('追加する項目を選んでください。'); return; }
+  toAdd.forEach(item=>{
+    state.bank.push({ id: uid(), name: item.name, tag: item.tag||'', estMin: item.estMin||30, repeat: true, detail: '' });
+    if(item.tag && !state.tags.includes(item.tag)) state.tags.push(item.tag);
+  });
+  save(); render();
+  toast(`${toAdd.length}件をタスクバンクに追加しました。`);
+  closeModal('bulkAddOverlay');
+});
+document.getElementById('btnBulkAddCancel').addEventListener('click', ()=> closeModal('bulkAddOverlay'));
 
 /* tags */
 document.getElementById('btnAddTag').addEventListener('click', ()=>{
