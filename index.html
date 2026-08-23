@@ -133,6 +133,18 @@ table tr.clickable:hover{background:var(--purple-bg)}
 .bulk-row input[type=text]{flex:1 1 140px;min-width:100px;font-family:inherit;font-size:12.5px;padding:5px 7px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--card);color:var(--text)}
 .bulk-row input[type=number]{width:56px;font-family:inherit;font-size:12.5px;padding:5px 7px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--card);color:var(--text)}
 .bulk-row select{font-family:inherit;font-size:12.5px;padding:5px 7px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--card);color:var(--text);max-width:110px}
+.planitem{border:1px solid var(--border);border-radius:var(--radius);padding:10px;margin-bottom:8px;background:var(--bg)}
+.planitem .name{font-weight:700;font-size:13.5px}
+.planitem .meta{font-size:11.5px;color:var(--text-sub);margin-top:3px}
+.plan-date-group{margin-bottom:10px}
+.plan-date-group .dlabel{font-size:11px;font-weight:700;color:var(--text-sub);margin-bottom:4px}
+.plan-day-row{display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12.5px}
+.plan-day-row:last-child{border-bottom:none}
+.plan-day-row.done .title{text-decoration:line-through;color:var(--text-sub)}
+.today-plan-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px}
+.today-plan-row:last-child{border-bottom:none}
+.today-plan-row .planname{font-size:11px;color:var(--purple);font-weight:700}
+.today-plan-row.done .title{text-decoration:line-through;color:var(--text-sub)}
 .taglist{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .tagchip{background:var(--purple-bg);color:var(--purple);border-radius:20px;padding:3px 10px;font-size:12px;display:flex;align-items:center;gap:6px}
 .tagchip button{background:none;border:none;color:var(--purple);cursor:pointer;font-size:12px;padding:0;line-height:1}
@@ -189,6 +201,7 @@ table tr.clickable:hover{background:var(--purple-bg)}
     <button data-tab="history">履歴</button>
     <button data-tab="tasklog">タスク履歴</button>
     <button data-tab="bank">タスクバンク</button>
+    <button data-tab="plans">計画</button>
     <button data-tab="settings">設定</button>
   </nav>
 
@@ -246,6 +259,11 @@ table tr.clickable:hover{background:var(--purple-bg)}
       <p style="font-size:11px;color:var(--text-sub);margin-top:6px" id="scheduleCardMeta"></p>
     </div>
 
+    <div class="card" id="todayPlanCard" style="display:none">
+      <h2>今日の学習計画</h2>
+      <div id="todayPlanList"></div>
+    </div>
+
     <div class="card">
       <h2>AI分析用プロンプトを作る</h2>
       <p style="font-size:12.5px;color:var(--text-sub);margin-top:0">今日または過去14日のデータから、Claudeなどに貼り付けて使えるコーチング用プロンプトを生成します。</p>
@@ -297,6 +315,19 @@ table tr.clickable:hover{background:var(--purple-bg)}
       <p style="font-size:12px;color:var(--text-sub);margin-top:0">「今日」でタスク名を入力すると、ここに登録した予定分数・タグが自動入力されます。「繰り返し」をオフにすると、完了と同時にバンクから削除されます。</p>
       <div id="bankList"></div>
       <div class="empty" id="bankEmpty" style="display:none">まだ登録がありません。</div>
+    </div>
+  </section>
+
+  <!-- PLANS -->
+  <section class="page" id="page-plans">
+    <div class="card">
+      <div class="row-between">
+        <h2 style="margin:0">中長期の学習計画</h2>
+        <button class="btn sm primary" id="btnNewPlan">＋ 新しい計画を作る</button>
+      </div>
+      <p style="font-size:12px;color:var(--text-sub);margin-top:0">SPI対策や筆記試験対策など、複数日にまたがる計画をAIと一緒に作れます。今日のタスクのXP・ランクとは別に管理されます。</p>
+      <div id="planList"></div>
+      <div class="empty" id="planEmpty" style="display:none">まだ計画がありません。</div>
     </div>
   </section>
 
@@ -400,6 +431,13 @@ table tr.clickable:hover{background:var(--purple-bg)}
         <input type="text" id="analysisFollowupInput" placeholder="続けて質問・相談する" style="flex:1;min-width:120px;padding:8px 10px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-family:inherit;font-size:13px">
         <button class="btn primary sm" id="btnAnalysisSend">送信</button>
       </div>
+      <div id="planPreviewWrap" style="display:none;margin-top:12px">
+        <label style="display:block;font-size:11.5px;color:var(--text-sub);margin-bottom:6px;font-weight:600">計画案のプレビュー（確認・編集してください）</label>
+        <div id="planPreviewList" style="max-height:220px;overflow-y:auto"></div>
+        <div class="row" style="margin-top:10px">
+          <button class="btn primary" id="btnPlanPreviewSave">この内容で保存する</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -443,6 +481,36 @@ table tr.clickable:hover{background:var(--purple-bg)}
   </div>
 </div>
 
+<!-- Plan create modal -->
+<div class="overlay" id="planCreateOverlay">
+  <div class="modal">
+    <button class="close" onclick="closeModal('planCreateOverlay')">✕</button>
+    <h3>新しい計画を作る</h3>
+    <div class="fg"><label>計画の名前</label><input type="text" id="planNameInput" placeholder="例: SPI対策"></div>
+    <div class="fg">
+      <label>やりたいこと・締め切り・使う教材など、自由に書いてください</label>
+      <textarea id="planGoalInput" style="min-height:120px" placeholder="例: 9/29までにSPIの非言語・言語を仕上げたい。参考書は〇〇を使う。平日は30分、休日は1時間くらい使える。"></textarea>
+    </div>
+    <div class="row">
+      <button class="btn primary" id="btnPlanStart">AIと相談を始める</button>
+    </div>
+    <p style="font-size:11px;color:var(--text-sub);margin-top:6px" id="planStartHint"></p>
+  </div>
+</div>
+
+<!-- Plan detail modal -->
+<div class="overlay" id="planDetailOverlay">
+  <div class="modal">
+    <button class="close" onclick="closeModal('planDetailOverlay')">✕</button>
+    <h3 id="planDetailTitle">計画</h3>
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn sm" id="btnPlanReschedule">AIに相談してリスケジュール</button>
+      <button class="btn sm danger" id="btnPlanDelete">この計画を削除</button>
+    </div>
+    <div id="planDetailItems" style="max-height:50vh;overflow-y:auto"></div>
+  </div>
+</div>
+
 <!-- Help modal -->
 <div class="overlay" id="helpOverlay">
   <div class="modal">
@@ -481,7 +549,8 @@ function defaultState(){
     history: [], taskHistory: [], bank: [],
     updatedAt: 0, syncCode: '', syncEnabled: false, lastSyncAt: null,
     scheduleText: '', scheduleGeneratedAt: null, scheduleMessages: [],
-    wakeTime: '', dinnerTime: '', bathTime: '', lunchTime: '', morningPrepMin: 50
+    wakeTime: '', dinnerTime: '', bathTime: '', lunchTime: '', morningPrepMin: 50,
+    studyPlans: []
   };
 }
 
@@ -1076,9 +1145,13 @@ function buildSchedulePrompt(){
 
 function renderChat(){
   const chat = document.getElementById('analysisChat');
-  chat.innerHTML = analysisMessages.slice(1).map(m=>
-    `<div class="chat-msg ${m.role}">${escapeHtml(m.content)}</div>`
-  ).join('');
+  chat.innerHTML = analysisMessages.slice(1).map(m=>{
+    let content = m.content;
+    if(m.role==='assistant' && currentAnalysisMode==='plan' && extractJsonArray(content)){
+      content = '📋 計画案を作成しました。下のプレビューで内容を確認してください。';
+    }
+    return `<div class="chat-msg ${m.role}">${escapeHtml(content)}</div>`;
+  }).join('');
   chat.scrollTop = chat.scrollHeight;
 }
 
@@ -1121,10 +1194,12 @@ function render(){
   document.getElementById('dinnerTimeInput').value = state.dinnerTime || '';
   document.getElementById('bathTimeInput').value = state.bathTime || '';
   renderScheduleCard();
+  renderTodayPlanCard();
 
   renderHistory();
   renderTaskLog();
   renderBank();
+  renderPlanList();
   renderTags();
   renderSettings();
 }
@@ -1136,6 +1211,126 @@ function renderScheduleCard(){
   document.getElementById('scheduleCardText').textContent = state.scheduleText;
   document.getElementById('scheduleCardMeta').textContent = state.scheduleGeneratedAt
     ? `作成: ${new Date(state.scheduleGeneratedAt).toLocaleString('ja-JP')}` : '';
+}
+
+/* ---------- study plans ---------- */
+function allPlanItemsSorted(plan){
+  return plan.items.slice().sort((a,b)=> a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+}
+function planProgress(plan){
+  const total = plan.items.length;
+  const done = plan.items.filter(i=>i.done).length;
+  return { total, done };
+}
+function nextUpcomingItem(plan){
+  const today = todayStr();
+  const upcoming = allPlanItemsSorted(plan).filter(i=>!i.done && i.date>=today);
+  return upcoming[0] || null;
+}
+function renderTodayPlanCard(){
+  const card = document.getElementById('todayPlanCard');
+  const today = todayStr();
+  const todayItems = [];
+  state.studyPlans.forEach(plan=>{
+    plan.items.forEach(item=>{
+      if(item.date===today) todayItems.push({ item, plan });
+    });
+  });
+  if(todayItems.length===0){ card.style.display = 'none'; return; }
+  card.style.display = '';
+  document.getElementById('todayPlanList').innerHTML = todayItems.map(({item,plan})=>`
+    <div class="today-plan-row ${item.done?'done':''}">
+      <input type="checkbox" class="todayplan-check" data-plan-id="${plan.id}" data-item-id="${item.id}" ${item.done?'checked':''}>
+      <div style="flex:1">
+        <div class="planname">${escapeHtml(plan.name)}</div>
+        <div class="title">${escapeHtml(item.title)}</div>
+      </div>
+      <button class="btn sm" data-action="addtaskfromplan" data-plan-id="${plan.id}" data-item-id="${item.id}">タスクに追加</button>
+    </div>
+  `).join('');
+}
+function renderPlanList(){
+  const wrap = document.getElementById('planList');
+  document.getElementById('planEmpty').style.display = state.studyPlans.length ? 'none' : '';
+  wrap.innerHTML = state.studyPlans.map(plan=>{
+    const { total, done } = planProgress(plan);
+    const next = nextUpcomingItem(plan);
+    return `<div class="planitem">
+      <div class="row-between">
+        <div>
+          <div class="name">${escapeHtml(plan.name)}</div>
+          <div class="meta">進捗: ${done}/${total}件${next?` ・ 次回: ${fmtDate(next.date)} ${escapeHtml(next.title)}`:' ・ 予定はすべて完了しています'}</div>
+        </div>
+        <button class="btn sm primary" data-action="openplan" data-id="${plan.id}">開く</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+let currentOpenPlanId = null;
+function openPlanDetail(planId){
+  const plan = state.studyPlans.find(p=>p.id===planId);
+  if(!plan) return;
+  currentOpenPlanId = planId;
+  document.getElementById('planDetailTitle').textContent = plan.name;
+  renderPlanDetailItems();
+  openModal('planDetailOverlay');
+}
+function renderPlanDetailItems(){
+  const plan = state.studyPlans.find(p=>p.id===currentOpenPlanId);
+  if(!plan) return;
+  const sorted = allPlanItemsSorted(plan);
+  const groups = {};
+  const order = [];
+  sorted.forEach(item=>{
+    if(!groups[item.date]){ groups[item.date]=[]; order.push(item.date); }
+    groups[item.date].push(item);
+  });
+  document.getElementById('planDetailItems').innerHTML = order.map(date=>`
+    <div class="plan-date-group">
+      <div class="dlabel">${fmtDate(date)}</div>
+      ${groups[date].map(item=>`
+        <div class="plan-day-row ${item.done?'done':''}">
+          <input type="checkbox" class="plandetail-check" data-item-id="${item.id}" ${item.done?'checked':''}>
+          <span class="title">${escapeHtml(item.title)}</span>
+        </div>
+      `).join('')}
+    </div>
+  `).join('') || '<p style="font-size:13px;color:var(--text-sub)">項目がありません。</p>';
+}
+let planPreviewProposed = [];
+function renderPlanPreview(){
+  const wrap = document.getElementById('planPreviewList');
+  wrap.innerHTML = planPreviewProposed.map((item,i)=>`
+    <div class="bulk-row" data-idx="${i}">
+      <input type="checkbox" class="planprev-check" data-idx="${i}" ${item.include!==false?'checked':''}>
+      <input type="text" class="planprev-date" style="width:100px;flex:none;font-family:inherit;font-size:12.5px;padding:5px 7px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--card);color:var(--text)" value="${escapeHtml(item.date)}" data-idx="${i}" data-field="date">
+      <input type="text" class="planprev-title" data-idx="${i}" value="${escapeHtml(item.title)}">
+    </div>
+  `).join('');
+  document.getElementById('planPreviewWrap').style.display = planPreviewProposed.length ? '' : 'none';
+}
+function buildPlanCreatePrompt(name, goal){
+  let prompt = 'あなたは学習計画のプランナーです。以下の内容をもとに、日付ごとの学習計画を一緒に考えてください。いきなり計画表を作らず、参考書の分量・1日に使える時間・休みたい曜日など、計画を立てるのに必要な情報が足りなければ先に質問してください。\n\n';
+  prompt += `今日の日付: ${todayStr()}\n\n`;
+  prompt += `計画の名前: ${name}\n\n`;
+  prompt += `やりたいこと:\n${goal}\n\n`;
+  prompt += '十分な情報が揃ったら、計画をJSON配列の形式（[{"date":"YYYY-MM-DD","title":"..."}]）だけで出力してください。その回は前置きや説明を書かず、JSON配列だけを返してください。';
+  return prompt;
+}
+function buildPlanReschedulePrompt(plan){
+  const today = todayStr();
+  const sorted = allPlanItemsSorted(plan);
+  const remaining = sorted.filter(i=>!i.done && i.date>=today);
+  const recentDone = sorted.filter(i=>i.done).slice(-5);
+  let prompt = `あなたは学習計画のプランナーです。以下は進行中の学習計画「${plan.name}」の予定です。予定通りに進まなかった、都合が変わったなどの理由でリスケジュールしたいと思っています。まず何がどう変わったのか、私に質問して確認してください。確認ができたら、今日（${today}）以降の新しい予定をJSON配列の形式（[{"date":"YYYY-MM-DD","title":"..."}]）だけで提案してください。その回は前置きや説明を書かず、JSON配列だけを返してください。\n\n`;
+  prompt += `今日の日付: ${today}\n\n`;
+  prompt += '現在の予定（今日以降・未完了分）:\n';
+  prompt += remaining.length ? remaining.map(i=>`- ${i.date}: ${i.title}`).join('\n') : '(なし)';
+  if(recentDone.length){
+    prompt += '\n\n（参考：直近に完了した項目）\n';
+    prompt += recentDone.map(i=>`- ${i.date}: ${i.title} [完了]`).join('\n');
+  }
+  return prompt;
 }
 
 function tagOptions(selected){
@@ -1336,19 +1531,23 @@ document.getElementById('btnClearSchedule').addEventListener('click', ()=>{
 });
 document.getElementById('btnEditSchedule').addEventListener('click', reopenScheduleChat);
 let currentAnalysisMode = null;
+let currentPlanContext = null;
 function openAnalysisModal(title, promptText, mode){
   currentAnalysisMode = mode || null;
   document.getElementById('analysisTitle').textContent = title;
   document.getElementById('analysisText').value = promptText;
   document.getElementById('analysisResultWrap').style.display = 'none';
+  document.getElementById('planPreviewWrap').style.display = 'none';
+  planPreviewProposed = [];
   analysisMessages = [];
   renderChat();
   const runBtn = document.getElementById('btnRunAnalysis');
   const hint = document.getElementById('analysisApiHint');
+  const runLabel = mode==='plan' ? 'AIに相談する' : 'AIに分析してもらう';
   if(apiKey){
     runBtn.style.display = '';
     runBtn.disabled = false;
-    runBtn.textContent = 'AIに分析してもらう';
+    runBtn.textContent = runLabel;
     hint.textContent = '';
   } else {
     runBtn.style.display = 'none';
@@ -1405,13 +1604,22 @@ async function sendAnalysisTurn(userText, btn){
       save();
       renderScheduleCard();
     }
+    if(currentAnalysisMode === 'plan'){
+      const arr = extractJsonArray(reply);
+      if(arr){
+        planPreviewProposed = parsePlanItemsFromArray(arr);
+        renderPlanPreview();
+      } else {
+        document.getElementById('planPreviewWrap').style.display = 'none';
+      }
+    }
   }catch(e){
     analysisMessages.pop();
     renderChat();
     toast('送信に失敗しました: ' + e.message);
   }finally{
     runBtn.disabled = false; sendBtn.disabled = false; input.disabled = false;
-    runBtn.textContent = 'AIに分析してもらう';
+    runBtn.textContent = currentAnalysisMode==='plan' ? 'AIに相談する' : 'AIに分析してもらう';
     sendBtn.textContent = '送信';
     analysisSending = false;
   }
@@ -1639,20 +1847,37 @@ function buildBulkAddPrompt(rawText){
   prompt += '対象のテキスト:\n' + rawText;
   return prompt;
 }
-function parseBulkAddResponse(text){
-  let cleaned = text.trim();
+function extractJsonArray(text){
+  let cleaned = String(text||'').trim();
   const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if(fenceMatch) cleaned = fenceMatch[1].trim();
   const arrStart = cleaned.indexOf('[');
   const arrEnd = cleaned.lastIndexOf(']');
-  if(arrStart!==-1 && arrEnd!==-1) cleaned = cleaned.slice(arrStart, arrEnd+1);
-  const parsed = JSON.parse(cleaned);
-  if(!Array.isArray(parsed)) throw new Error('配列ではありません');
-  return parsed.map(item=>({
+  if(arrStart===-1 || arrEnd===-1 || arrEnd<=arrStart) return null;
+  cleaned = cleaned.slice(arrStart, arrEnd+1);
+  try{
+    const parsed = JSON.parse(cleaned);
+    return Array.isArray(parsed) ? parsed : null;
+  }catch(e){
+    return null;
+  }
+}
+function parseBulkAddResponse(text){
+  const arr = extractJsonArray(text);
+  if(!arr) throw new Error('JSON配列が見つかりませんでした');
+  return arr.map(item=>({
     name: String(item.name||'').trim(),
     tag: String(item.tag||'').trim(),
     estMin: Math.max(0, Number(item.estMin)||30)
   })).filter(item=>item.name);
+}
+function parsePlanItemsFromArray(arr){
+  return arr.map(item=>({
+    id: uid(),
+    date: String(item.date||'').trim(),
+    title: String(item.title||'').trim(),
+    done: false
+  })).filter(item=>item.title && /^\d{4}-\d{2}-\d{2}$/.test(item.date));
 }
 function renderBulkAddPreview(){
   const wrap = document.getElementById('bulkAddPreviewList');
@@ -1718,6 +1943,108 @@ document.getElementById('btnBulkAddCommit').addEventListener('click', ()=>{
   closeModal('bulkAddOverlay');
 });
 document.getElementById('btnBulkAddCancel').addEventListener('click', ()=> closeModal('bulkAddOverlay'));
+
+/* study plans */
+document.getElementById('btnNewPlan').addEventListener('click', ()=>{
+  document.getElementById('planNameInput').value = '';
+  document.getElementById('planGoalInput').value = '';
+  document.getElementById('planStartHint').textContent = apiKey ? '' : '設定タブでAPIキーを登録すると使えます。';
+  document.getElementById('btnPlanStart').disabled = !apiKey;
+  openModal('planCreateOverlay');
+});
+document.getElementById('btnPlanStart').addEventListener('click', ()=>{
+  const name = document.getElementById('planNameInput').value.trim();
+  const goal = document.getElementById('planGoalInput').value.trim();
+  if(!name){ toast('計画の名前を入力してください。'); return; }
+  if(!goal){ toast('やりたいことを入力してください。'); return; }
+  if(!apiKey){ toast('設定タブでAPIキーを登録してください。'); return; }
+  currentPlanContext = { mode:'create', name, planId:null };
+  closeModal('planCreateOverlay');
+  openAnalysisModal(`新しい計画:${name}`, buildPlanCreatePrompt(name, goal), 'plan');
+});
+document.getElementById('planList').addEventListener('click', e=>{
+  const btn = e.target.closest('button[data-action="openplan"]');
+  if(!btn) return;
+  openPlanDetail(btn.dataset.id);
+});
+document.getElementById('todayPlanList').addEventListener('change', e=>{
+  if(!e.target.classList.contains('todayplan-check')) return;
+  const plan = state.studyPlans.find(p=>p.id===e.target.dataset.planId);
+  if(!plan) return;
+  const item = plan.items.find(i=>i.id===e.target.dataset.itemId);
+  if(!item) return;
+  item.done = e.target.checked;
+  save(); render();
+});
+document.getElementById('todayPlanList').addEventListener('click', e=>{
+  const btn = e.target.closest('button[data-action="addtaskfromplan"]');
+  if(!btn) return;
+  const plan = state.studyPlans.find(p=>p.id===btn.dataset.planId);
+  if(!plan) return;
+  const item = plan.items.find(i=>i.id===btn.dataset.itemId);
+  if(!item) return;
+  addTask({ name: item.title, tag:'', estMin:30 });
+  toast('今日のタスクに追加しました。');
+});
+document.getElementById('planDetailItems').addEventListener('change', e=>{
+  if(!e.target.classList.contains('plandetail-check')) return;
+  const plan = state.studyPlans.find(p=>p.id===currentOpenPlanId);
+  if(!plan) return;
+  const item = plan.items.find(i=>i.id===e.target.dataset.itemId);
+  if(!item) return;
+  item.done = e.target.checked;
+  save(); render(); renderPlanDetailItems();
+});
+document.getElementById('btnPlanDelete').addEventListener('click', ()=>{
+  if(!currentOpenPlanId) return;
+  if(!confirm('この計画を削除しますか？（記録は元に戻せません）')) return;
+  state.studyPlans = state.studyPlans.filter(p=>p.id!==currentOpenPlanId);
+  save(); render();
+  closeModal('planDetailOverlay');
+});
+document.getElementById('btnPlanReschedule').addEventListener('click', ()=>{
+  const plan = state.studyPlans.find(p=>p.id===currentOpenPlanId);
+  if(!plan) return;
+  if(!apiKey){ toast('設定タブでAPIキーを登録してください。'); return; }
+  currentPlanContext = { mode:'reschedule', name: plan.name, planId: plan.id };
+  closeModal('planDetailOverlay');
+  openAnalysisModal(`リスケジュール:${plan.name}`, buildPlanReschedulePrompt(plan), 'plan');
+});
+document.getElementById('planPreviewList').addEventListener('input', e=>{
+  const idx = Number(e.target.dataset.idx);
+  if(Number.isNaN(idx) || !planPreviewProposed[idx]) return;
+  if(e.target.classList.contains('planprev-title')) planPreviewProposed[idx].title = e.target.value;
+  else if(e.target.dataset.field==='date') planPreviewProposed[idx].date = e.target.value;
+});
+document.getElementById('planPreviewList').addEventListener('change', e=>{
+  const idx = Number(e.target.dataset.idx);
+  if(Number.isNaN(idx) || !planPreviewProposed[idx]) return;
+  if(e.target.classList.contains('planprev-check')) planPreviewProposed[idx].include = e.target.checked;
+});
+document.getElementById('btnPlanPreviewSave').addEventListener('click', ()=>{
+  const toAdd = planPreviewProposed
+    .filter(item=>item.include!==false && item.title && /^\d{4}-\d{2}-\d{2}$/.test(item.date))
+    .map(item=>({ id: uid(), date: item.date, title: item.title, done:false }));
+  if(toAdd.length===0){ toast('追加する項目を選んでください。'); return; }
+  if(currentPlanContext && currentPlanContext.mode==='create'){
+    state.studyPlans.push({
+      id: uid(), name: currentPlanContext.name, createdAt: Date.now(),
+      items: toAdd, messages: analysisMessages.slice()
+    });
+    toast(`計画「${currentPlanContext.name}」を作成しました（${toAdd.length}件）。`);
+  } else if(currentPlanContext && currentPlanContext.mode==='reschedule'){
+    const plan = state.studyPlans.find(p=>p.id===currentPlanContext.planId);
+    if(!plan){ toast('計画が見つかりませんでした。'); return; }
+    const today = todayStr();
+    plan.items = plan.items.filter(i=>i.done || i.date<today).concat(toAdd);
+    plan.messages = analysisMessages.slice();
+    toast(`計画「${plan.name}」を更新しました（${toAdd.length}件）。`);
+  } else {
+    return;
+  }
+  save(); render();
+  closeModal('analysisOverlay');
+});
 
 /* tags */
 document.getElementById('btnAddTag').addEventListener('click', ()=>{
