@@ -998,7 +998,7 @@ async function callClaudeMessages(messages){
     },
     body: JSON.stringify({
       model: CLAUDE_MODEL,
-      max_tokens: 1024,
+      max_tokens: 8192,
       messages
     })
   });
@@ -1008,7 +1008,11 @@ async function callClaudeMessages(messages){
     throw new Error(msg);
   }
   const data = await res.json();
-  return (data.content || []).map(c => c.text || '').join('');
+  const text = (data.content || []).map(c => c.text || '').join('');
+  if(data.stop_reason === 'max_tokens'){
+    throw new Error('回答が長すぎて途中で切れてしまいました。範囲を短く区切って（例:1ヶ月ずつ）お願いしてみてください。');
+  }
+  return text;
 }
 
 /* ---------- Google Calendar ---------- */
@@ -1609,8 +1613,14 @@ async function sendAnalysisTurn(userText, btn){
       if(arr){
         planPreviewProposed = parsePlanItemsFromArray(arr);
         renderPlanPreview();
+        if(planPreviewProposed.length===0){
+          toast('計画案の形式を読み取れませんでした。もう一度お願いしてみてください。');
+        }
       } else {
         document.getElementById('planPreviewWrap').style.display = 'none';
+        if(reply.includes('[') && reply.includes('date')){
+          toast('計画案が途中で切れているようです。もう一度お願いするか、範囲を短く区切ってみてください。');
+        }
       }
     }
   }catch(e){
