@@ -687,6 +687,14 @@ function removeTask(id){
   save(); render();
 }
 function getTask(id){ return state.todayTasks.find(t=>t.id===id); }
+function syncLinkedPlanItem(t, doneValue){
+  if(!t.fromPlanId || !t.fromPlanItemId) return;
+  const plan = state.studyPlans.find(p=>p.id===t.fromPlanId);
+  if(!plan) return;
+  const item = plan.items.find(i=>i.id===t.fromPlanItemId);
+  if(!item) return;
+  item.done = doneValue;
+}
 
 function startTask(id){
   const t = getTask(id); if(!t) return;
@@ -727,6 +735,7 @@ function finishTask(id){
   addXP(gain, log);
   checkDailyBonus(log);
   removeFromBank(t.name);
+  syncLinkedPlanItem(t, true);
   save(); render();
   toast([`完了: ${t.name}  +${gain} XP`, ...log].join('\n'));
 }
@@ -744,6 +753,7 @@ function quickCompleteTask(id){
   addXP(gain, log);
   checkDailyBonus(log);
   removeFromBank(t.name);
+  syncLinkedPlanItem(t, true);
   save(); render();
   toast([`計画通り完了: ${t.name}  +${gain} XP`, ...log].join('\n'));
 }
@@ -772,6 +782,7 @@ function resetTask(id){
   if(rank !== 'A') state.bonusA = false;
   if(rank !== 'A-' && rank !== 'A') state.bonusAMinus = false;
   if(rank !== 'B' && rank !== 'A-' && rank !== 'A') state.bonusB = false;
+  if(wasFinished) syncLinkedPlanItem(t, false);
   save(); render();
   toast(`リセット: ${t.name}`);
 }
@@ -1233,6 +1244,7 @@ function render(){
   renderTaskLog();
   renderBank();
   renderPlanList();
+  if(currentOpenPlanId) renderPlanDetailItems();
   renderTags();
   renderSettings();
 }
@@ -2053,7 +2065,7 @@ document.getElementById('todayPlanList').addEventListener('click', e=>{
   if(!plan) return;
   const item = plan.items.find(i=>i.id===btn.dataset.itemId);
   if(!item) return;
-  addTask({ name: item.title, tag:'', estMin:30 });
+  addTask({ name: item.title, tag:'', estMin:30, fromPlanId: plan.id, fromPlanItemId: item.id });
   toast('今日のタスクに追加しました。');
 });
 document.getElementById('planDetailItems').addEventListener('change', e=>{
