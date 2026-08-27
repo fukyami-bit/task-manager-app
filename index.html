@@ -885,6 +885,7 @@ function checkDayRollover(silent){
   state.bonusA = false;
   state.lastDate = today;
   state.bLineLocked = bLineComputedToday();
+  if(googleAccessToken) fetchTodayEvents();
   save(); render();
   toast(['新しい日になりました。前日の記録を保存しました。', ...log].join('\n'));
   return true;
@@ -920,6 +921,7 @@ function undoAdvanceDay(){
   state.taskHistory.length = snap.taskHistoryLen;
   state.dateOverride = null;
   state.dayAdvanceUndo = null;
+  if(googleAccessToken) fetchTodayEvents();
   save(); render();
   toast('前倒しを取り消しました。');
 }
@@ -1130,9 +1132,9 @@ async function connectGoogleCalendar(){
 
 async function fetchTodayEvents(){
   if(!googleAccessToken) return;
-  const now = new Date();
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-  const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()+1).toISOString();
+  const [ty,tm,td] = todayStr().split('-').map(Number);
+  const startOfDay = new Date(ty, tm-1, td).toISOString();
+  const endOfDay = new Date(ty, tm-1, td+1).toISOString();
   const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?` +
     `timeMin=${encodeURIComponent(startOfDay)}&timeMax=${encodeURIComponent(endOfDay)}&singleEvents=true&orderBy=startTime`;
   try{
@@ -1153,9 +1155,9 @@ async function fetchTodayEvents(){
 
 async function fetchCalendarEventsRange(daysAhead){
   if(!googleAccessToken) return null;
-  const now = new Date();
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-  const endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate()+daysAhead).toISOString();
+  const [ty,tm,td] = todayStr().split('-').map(Number);
+  const startOfDay = new Date(ty, tm-1, td).toISOString();
+  const endDate = new Date(ty, tm-1, td+daysAhead).toISOString();
   const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?` +
     `timeMin=${encodeURIComponent(startOfDay)}&timeMax=${encodeURIComponent(endDate)}&singleEvents=true&orderBy=startTime&maxResults=250`;
   try{
